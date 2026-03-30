@@ -8,7 +8,7 @@
   body { margin: 0; padding: 0; overflow: hidden; background: #111; }
   canvas { display: block; }
   #controls {
-    position: fixed; top: 12px; left: 12px; z-index: 10;
+    position: fixed; top: 12px; right: 12px; z-index: 10;
     display: flex; flex-direction: column; gap: 5px;
     font: 13px/1.4 system-ui, sans-serif; color: #ccc;
     background: rgba(0,0,0,0.65); padding: 10px 14px;
@@ -37,6 +37,10 @@
   <div class="row"><label>Push force</label><input id="sForce" type="range" min="1" max="30" value="12"><span class="val" id="vForce">0.12</span></div>
   <div class="row"><label>Phero decay</label><input id="sDecay" type="range" min="980" max="999" value="995"><span class="val" id="vDecay">.995</span></div>
   <div class="row"><label>Speed</label><input id="sSpeed" type="range" min="1" max="8" value="1"><span class="val" id="vSpeed">1x</span></div>
+  <div class="row"><label>Trail attract</label><input id="sTrail" type="range" min="0" max="50" value="10"><span class="val" id="vTrail">1.0</span></div>
+  <div class="row"><label>Push attract</label><input id="sPush" type="range" min="0" max="50" value="25"><span class="val" id="vPush">2.5</span></div>
+  <div class="row"><label>Return home</label><input id="sReturn" type="range" min="0" max="50" value="15"><span class="val" id="vReturn">0.15</span></div>
+  <div class="row"><label>Lose interest</label><input id="sLose" type="range" min="0" max="100" value="50"><span class="val" id="vLose">0.50</span></div>
   <div class="row"><label>Barrier wall</label><input id="cbWall" type="checkbox" checked></div>
   <button id="btnReset">Reset</button>
 </div>
@@ -68,7 +72,11 @@ const CFG = {
   goalBias: 0.12,
   wanderNoise: 0.5,
   stepsPerFrame: 1,
-  gapHeight: 55
+  gapHeight: 55,
+  returnHomeStrength: 0.15,
+  trailAttraction: 1.0,
+  pushAttraction: 2.5,
+  loseInterest: 0.5
 };
 
 // ===================== STATE =====================
@@ -327,10 +335,11 @@ function createAnt() {
     vx: Math.cos(a) * spd,
     vy: Math.sin(a) * spd,
     speed: spd,
-    state: 0, // 0=wander, 1=push
+    state: 0, // 0=wander, 1=push, 2=return home, 3=random push
     pushDx: 0, pushDy: 0,
     attachLx: 0, attachLy: 0,
-    timer: 0
+    timer: 0,
+    progress: 0
   };
 }
 
@@ -352,17 +361,52 @@ function initAnts() {
 }
 
 // States: 0=wander (no pheromone, follows green+blue)
-//         1=push  (attached to body, emits blue)
-//         2=return home (emits green, ignores blue, heads right → state 0 at right edge)
+//         1=push  (attached to body, emits blue, biased toward nest)
+//         2=return home (emits green, steers toward nest → state 0 at nest)
+//         3=random push (attached to body, pushes random direction, lost interest in nest)
 
 function updateAnt(ant) {
   const dist = distToBody(ant.x, ant.y);
 
+  // ---- STATE 3: RANDOM PUSH (lost interest) ----
   // ---- STATE 1: PUSHING ----
-  if (ant.state === 1) {
+  if (ant.state === 1 || ant.state === 3) {
     const [wx, wy] = localToWorld(ant.attachLx, ant.attachLy);
     ant.x = wx;
     ant.y = wy;
+
+    if (ant.state === 1) {
+      // Rotate push direction toward nest
+      const toNestX = nest.x - wx, toNestY = nest.y - wy;
+      const toNestLen = Math.sqrt(toNestX * toNestX + toNestY * toNestY);
+      if (toNestLen > 1) {
+        ant.pushDx += (toNestX / toNestLen - ant.pushDx) * CFG.goalBias;
+        ant.pushDy += (toNestY / toNestLen - ant.pushDy) * CFG.goalBias;
+        const pLen = Math.sqrt(ant.pushDx * ant.pushDx + ant.pushDy * ant.pushDy);
+        ant.pushDx /= pLen;
+        ant.pushDy /= pLen;
+      }
+
+      // Track progress toward nest (dot product of body velocity with nest direction)
+      if (toNestLen > 1) {
+        const nestDirX = toNestX / toNestLen, nestDirY = toNestY / toNestLen;
+        const progressThisTick = body.vx * nestDirX + body.vy * nestDirY;
+        ant.progress = ant.progress * 0.5 + progressThisTick * 0.5;
+      }
+
+      // Lose interest if not making progress
+      if (ant.timer > 0 && ant.progress < 0.01 * (1 - CFG.loseInterest) && Math.random() < 0.01 * CFG.loseInterest) {
+        ant.state = 3;
+        ant.pushDx = -toNestX / toNestLen;
+        ant.pushDy = -toNestY / toNestLen;
+        ant.timer = 0;
+      }
+    } else {
+      // State 3: slowly rotate push direction randomly
+      const a = Math.atan2(ant.pushDy, ant.pushDx) + (Math.random() - 0.5) * 0.15;
+      ant.pushDx = Math.cos(a);
+      ant.pushDy = Math.sin(a);
+    }
 
     addForce(ant.pushDx * CFG.pushForce, ant.pushDy * CFG.pushForce, wx, wy);
     deposit(ant.x, ant.y, pushGrid, CFG.pushDeposit);
@@ -375,7 +419,8 @@ function updateAnt(ant) {
 
     if (forceDetach || Math.random() < detachChance) {
       ant.state = 0;
-      ant.timer = 0;
+      ant.timer = -80;
+      ant.progress = 0;
       const a = Math.random() * Math.PI * 2;
       ant.vx = Math.cos(a) * ant.speed;
       ant.vy = Math.sin(a) * ant.speed;
@@ -391,9 +436,15 @@ function updateAnt(ant) {
   if (ant.state === 2) {
     deposit(ant.x, ant.y, trailGrid, CFG.trailDeposit);
 
-    // Random walk only — emit green but don't follow it
     let heading = Math.atan2(ant.vy, ant.vx);
     heading += (Math.random() - 0.5) * CFG.wanderNoise * 0.8;
+
+    // Steer toward nest
+    const toNest = Math.atan2(nest.y - ant.y, nest.x - ant.x);
+    let diff = toNest - heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    heading += diff * CFG.returnHomeStrength;
 
     ant.vx = Math.cos(heading) * ant.speed;
     ant.vy = Math.sin(heading) * ant.speed;
@@ -413,17 +464,22 @@ function updateAnt(ant) {
   }
 
   // ---- STATE 0: WANDER ----
+  ant.timer++;
   let heading = Math.atan2(ant.vy, ant.vx);
 
-  // Forward-facing sensors: follow green (trail) + blue (push) pheromone
-  const SD = 14, SA = 0.5;
-  const phAt = (x, y) => sample(x, y, trailGrid) + sample(x, y, pushGrid) * 2.5;
-  const sL = phAt(ant.x + Math.cos(heading - SA) * SD, ant.y + Math.sin(heading - SA) * SD);
-  const sC = phAt(ant.x + Math.cos(heading)      * SD, ant.y + Math.sin(heading)      * SD);
-  const sR = phAt(ant.x + Math.cos(heading + SA) * SD, ant.y + Math.sin(heading + SA) * SD);
+  // Pheromone sensing (disabled during post-detach cooldown)
+  if (ant.timer >= 0) {
+    const SD = 14, SA = 0.5;
+    const phAt = (x, y) => sample(x, y, trailGrid) * CFG.trailAttraction + sample(x, y, pushGrid) * CFG.pushAttraction;
+    const sL = phAt(ant.x + Math.cos(heading - SA) * SD, ant.y + Math.sin(heading - SA) * SD);
+    const sC = phAt(ant.x + Math.cos(heading)      * SD, ant.y + Math.sin(heading)      * SD);
+    const sR = phAt(ant.x + Math.cos(heading + SA) * SD, ant.y + Math.sin(heading + SA) * SD);
 
-  if (sL > sC && sL > sR) heading -= 0.3;
-  else if (sR > sC && sR > sL) heading += 0.3;
+    const maxPh = Math.max(sL, sC, sR);
+    const turnAmt = 0.3 * Math.min(maxPh, 1);
+    if (sL > sC && sL > sR) heading -= turnAmt;
+    else if (sR > sC && sR > sL) heading += turnAmt;
+  }
 
   heading += (Math.random() - 0.5) * CFG.wanderNoise;
 
@@ -573,10 +629,30 @@ function renderBody() {
   ctx.restore();
 }
 
+const STATE_COLORS = ['#4a9eff', '#ff4040', '#40dd40', '#ff8c00'];
+const STATE_NAMES  = ['Wander', 'Push', 'Return home', 'Random push'];
+
+function renderLegend() {
+  const x = W - 14, lineH = 18, dotR = 5;
+  const y0 = H - STATE_NAMES.length * lineH - 10;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < STATE_NAMES.length; i++) {
+    const cy = y0 + i * lineH + lineH / 2;
+    ctx.fillStyle = STATE_COLORS[i];
+    ctx.beginPath();
+    ctx.arc(x, cy, dotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#999';
+    ctx.fillText(STATE_NAMES[i], x - dotR - 6, cy);
+  }
+}
+
 function renderAnts() {
   const r = CFG.antSize;
-  const colors = ['#4a9eff', '#ff4040', '#40dd40']; // wander, push, return home
-  for (let s = 0; s < 3; s++) {
+  const colors = STATE_COLORS;
+  for (let s = 0; s < 4; s++) {
     ctx.beginPath();
     ctx.fillStyle = colors[s];
     for (const ant of ants) {
@@ -585,6 +661,20 @@ function renderAnts() {
       ctx.arc(ant.x, ant.y, r, 0, Math.PI * 2);
     }
     ctx.fill();
+  }
+
+  // Draw push direction vectors for pushers (states 1 and 3)
+  const vecLen = 8;
+  ctx.lineWidth = 1.2;
+  for (const s of [1, 3]) {
+    ctx.strokeStyle = colors[s];
+    ctx.beginPath();
+    for (const ant of ants) {
+      if (ant.state !== s) continue;
+      ctx.moveTo(ant.x, ant.y);
+      ctx.lineTo(ant.x + ant.pushDx * vecLen, ant.y + ant.pushDy * vecLen);
+    }
+    ctx.stroke();
   }
 }
 
@@ -598,9 +688,11 @@ function renderInfo() {
   }
   const pushing = ants.filter(a => a.state === 1).length;
   const homing = ants.filter(a => a.state === 2).length;
+  const randPush = ants.filter(a => a.state === 3).length;
+  const wandering = ants.length - pushing - homing - randPush;
   const deg = ((body.angle * 180 / Math.PI) % 360).toFixed(1);
   const speed = Math.sqrt(body.vx * body.vx + body.vy * body.vy).toFixed(2);
-  info.textContent = `${fps} fps | push: ${pushing} home: ${homing} wander: ${ants.length - pushing - homing} | angle: ${deg}° | speed: ${speed}`;
+  info.textContent = `${fps} fps | push: ${pushing} rand: ${randPush} home: ${homing} wander: ${wandering} | angle: ${deg}° | speed: ${speed}`;
 }
 
 // ===================== SIMULATION STEP =====================
@@ -623,6 +715,7 @@ function frame() {
   renderWalls();
   renderBody();
   renderAnts();
+  renderLegend();
   renderInfo();
 
   requestAnimationFrame(frame);
@@ -654,6 +747,26 @@ function bindControls() {
   s('sSpeed').oninput = function() {
     CFG.stepsPerFrame = +this.value;
     s('vSpeed').textContent = this.value + 'x';
+  };
+
+  s('sTrail').oninput = function() {
+    CFG.trailAttraction = +this.value / 10;
+    s('vTrail').textContent = CFG.trailAttraction.toFixed(1);
+  };
+
+  s('sPush').oninput = function() {
+    CFG.pushAttraction = +this.value / 10;
+    s('vPush').textContent = CFG.pushAttraction.toFixed(1);
+  };
+
+  s('sReturn').oninput = function() {
+    CFG.returnHomeStrength = +this.value / 100;
+    s('vReturn').textContent = CFG.returnHomeStrength.toFixed(2);
+  };
+
+  s('sLose').oninput = function() {
+    CFG.loseInterest = +this.value / 100;
+    s('vLose').textContent = CFG.loseInterest.toFixed(2);
   };
 
   s('cbWall').onchange = function() {
