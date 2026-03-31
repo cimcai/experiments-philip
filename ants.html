@@ -65,8 +65,8 @@ const CFG = {
   pheroDiffuse: 0.1,
   trailDeposit: 0.4,
   pushDeposit: 1.0,
-  bodyMass: 60,
-  bodyInertia: 80000,
+  bodyMass: 85,
+  bodyInertia: 175000,
   bodyLinDrag: 0.93,
   bodyAngDrag: 0.91,
   goalBias: 0.12,
@@ -92,12 +92,13 @@ let wallEnabled = true;
 let frameCount = 0;
 let fps = 0, lastFpsTime = 0, fpsFrames = 0;
 
-// T-shape parts relative to body center (geometric center of bounding box)
-// Bar: 120x14 at top, Stem: 14x56 hanging down
-// Bounding box: 120 wide x 70 tall, centered at (0,0)
+// I-shape parts relative to body center (geometric center of bounding box)
+// Top bar: 80x14, Stem: 14x82, Bottom bar: 80x14
+// Bounding box: 80 wide x 110 tall, centered at (0,0)
 const BODY_PARTS = [
-  { cx: 0, cy: -28, hw: 60, hh: 7 },
-  { cx: 0, cy:   7, hw:  7, hh: 28 }
+  { cx: 0, cy: -48, hw: 40, hh: 7 },
+  { cx: 0, cy:   0, hw:  7, hh: 41 },
+  { cx: 0, cy:  48, hw: 17.5, hh: 7 }
 ];
 
 // ===================== CANVAS SETUP =====================
@@ -176,7 +177,7 @@ function diffuseDecay() {
   tmp = pushGrid;  pushGrid  = pushBuf;  pushBuf  = tmp;
 }
 
-// ===================== RIGID BODY (T-SHAPE) =====================
+// ===================== RIGID BODY (I-SHAPE) =====================
 
 function initBody() {
   body = {
@@ -260,13 +261,16 @@ function updateBody() {
 
 function initWalls() {
   const wallX = W * 0.55;
+  const wall2X = wallX - 100;
   const wallW = 12;
   const gapH = CFG.gapHeight;
   const gapTop = H / 2 - gapH / 2;
   const gapBot = H / 2 + gapH / 2;
   walls = [
     { x: wallX, y: 0,      w: wallW, h: gapTop },
-    { x: wallX, y: gapBot,  w: wallW, h: H - gapBot }
+    { x: wallX, y: gapBot,  w: wallW, h: H - gapBot },
+    { x: wall2X, y: 0,      w: wallW, h: gapTop },
+    { x: wall2X, y: gapBot,  w: wallW, h: H - gapBot }
   ];
   nest = { x: W - 40, y: H / 2, r: 30 };
 }
@@ -575,17 +579,19 @@ function renderWalls() {
     ctx.fillStyle = '#444';
     for (const w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
 
-    const wallX = walls[0].x, wallW = walls[0].w;
-    const gapTop = walls[0].y + walls[0].h;
-    const gapBot = walls[1].y;
     ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(wallX, gapTop);
-    ctx.lineTo(wallX + wallW, gapTop);
-    ctx.moveTo(wallX, gapBot);
-    ctx.lineTo(wallX + wallW, gapBot);
+    for (let i = 0; i < walls.length; i += 2) {
+      const wx = walls[i].x, ww = walls[i].w;
+      const gapTop = walls[i].y + walls[i].h;
+      const gapBot = walls[i + 1].y;
+      ctx.moveTo(wx, gapTop);
+      ctx.lineTo(wx + ww, gapTop);
+      ctx.moveTo(wx, gapBot);
+      ctx.lineTo(wx + ww, gapBot);
+    }
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -612,19 +618,6 @@ function renderBody() {
   ctx.fillStyle = '#cc3333';
   for (const p of BODY_PARTS) {
     ctx.fillRect(p.cx - p.hw, p.cy - p.hh, p.hw * 2, p.hh * 2);
-  }
-  // Serration teeth along bar edges
-  ctx.fillStyle = '#aa2222';
-  const bar = BODY_PARTS[0];
-  const toothW = 5, toothH = 3;
-  for (let tx = bar.cx - bar.hw; tx < bar.cx + bar.hw; tx += toothW * 2) {
-    ctx.fillRect(tx, bar.cy - bar.hh - toothH, toothW, toothH);
-    ctx.fillRect(tx, bar.cy + bar.hh, toothW, toothH);
-  }
-  const stem = BODY_PARTS[1];
-  for (let ty = stem.cy - stem.hh; ty < stem.cy + stem.hh; ty += toothW * 2) {
-    ctx.fillRect(stem.cx - stem.hw - toothH, ty, toothH, toothW);
-    ctx.fillRect(stem.cx + stem.hw, ty, toothH, toothW);
   }
   ctx.restore();
 }
