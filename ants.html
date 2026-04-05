@@ -71,11 +71,11 @@ const CFG = {
   bodyAngDrag: 0.91,
   goalBias: 0.12,
   wanderNoise: 0.5,
-  stepsPerFrame: 1,
+  stepsPerFrame: 5,
   gapHeight: 55,
   returnHomeStrength: 0.15,
-  trailAttraction: 1.0,
-  pushAttraction: 2.5,
+  trailAttraction: 0.4,
+  pushAttraction: 0.0,
   loseInterest: 0.5
 };
 
@@ -93,12 +93,12 @@ let frameCount = 0;
 let fps = 0, lastFpsTime = 0, fpsFrames = 0;
 
 // I-shape parts relative to body center (geometric center of bounding box)
-// Top bar: 80x14, Stem: 14x82, Bottom bar: 80x14
-// Bounding box: 80 wide x 110 tall, centered at (0,0)
+// Top bar: 80x14, Stem: 14x106.6, Bottom bar: 35x14
+// Bounding box: 80 wide x 134.6 tall, centered at (0,0)
 const BODY_PARTS = [
-  { cx: 0, cy: -48, hw: 40, hh: 7 },
-  { cx: 0, cy:   0, hw:  7, hh: 41 },
-  { cx: 0, cy:  48, hw: 17.5, hh: 7 }
+  { cx: 0, cy: -60.3, hw: 40, hh: 7 },
+  { cx: 0, cy:     0, hw:  7, hh: 53.3 },
+  { cx: 0, cy:  60.3, hw: 17.5, hh: 7 }
 ];
 
 // ===================== CANVAS SETUP =====================
