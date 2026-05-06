@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ant tracker viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0e0f12; color: #d8dee4;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    display: grid; grid-template-columns: 1fr 320px; height: 100vh;
+  }
+  #stage { position: relative; overflow: hidden; background: #000; }
+  #wrap  { position: absolute; inset: 0; display: grid; place-items: center; }
+  #vidbox { position: relative; }
+  video, canvas { display: block; }
+  canvas { position: absolute; inset: 0; pointer-events: auto; cursor: crosshair; }
+  #side {
+    border-left: 1px solid #1f2329; background: #15171c;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  #side header { padding: 12px 14px; border-bottom: 1px solid #1f2329; }
+  #side header h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+  #side header p { margin: 0; font-size: 11px; color: #7d8590; }
+  #controls { padding: 10px 14px; border-bottom: 1px solid #1f2329; display: grid; gap: 6px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row label { flex: 1; font-size: 11px; color: #9aa0a6; }
+  .row input[type=range] { flex: 1.4; }
+  .row input[type=text] {
+    flex: 1; background: #0e0f12; color: #d8dee4;
+    border: 1px solid #2a2f37; padding: 4px 6px; border-radius: 4px;
+    font: inherit;
+  }
+  button {
+    background: #1f2329; color: #d8dee4; border: 1px solid #2a2f37;
+    padding: 4px 8px; border-radius: 4px; cursor: pointer; font: inherit;
+  }
+  button:hover { background: #2a2f37; }
+  button.on { background: #2d4a8a; border-color: #3a5fa8; }
+  #list { flex: 1; overflow: auto; }
+  .ant {
+    display: grid; grid-template-columns: 22px 18px 1fr auto auto;
+    align-items: center; gap: 6px;
+    padding: 4px 10px 4px 6px; border-bottom: 1px solid #1a1d22;
+    font-variant-numeric: tabular-nums; cursor: pointer;
+  }
+  .ant:hover { background: #1a1d22; }
+  .ant.path { background: #2d4a8a; }
+  .ant.hide { opacity: 0.4; }
+  .ant.hide .sw { background: transparent !important; box-shadow: inset 0 0 0 1px #555; }
+  .ant .eye {
+    background: transparent; border: 0; color: #7d8590;
+    padding: 0; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .ant .eye:hover { color: #d8dee4; }
+  .ant .sw { width: 10px; height: 10px; border-radius: 50%; justify-self: center; }
+  .ant .id { font-weight: 500; color: #d8dee4; }
+  .ant .meta { font-size: 11px; color: #7d8590; }
+  #status {
+    padding: 6px 14px; font-size: 11px; color: #7d8590;
+    border-top: 1px solid #1f2329; background: #0e0f12;
+  }
+  #playbar {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    padding: 30px 16px 12px; display: grid; gap: 6px;
+  }
+  #playbar .row { gap: 12px; }
+  #playbar input[type=range] { flex: 1; }
+  #time { font-variant-numeric: tabular-nums; min-width: 90px; text-align: right; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="wrap">
+    <div id="vidbox">
+      <video id="vid" preload="auto" playsinline></video>
+      <canvas id="ovl"></canvas>
+    </div>
+  </div>
+  <div id="playbar">
+    <div class="row">
+      <button id="btnPlay">▶</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
+      <span id="time">0.00s</span>
+    </div>
+    <div class="row">
+      <label>speed</label>
+      <input id="rate" type="range" min="0.25" max="4" step="0.25" value="1" />
+      <span id="rateVal" style="min-width:36px;text-align:right;">1x</span>
+    </div>
+  </div>
+</div>
+
+<aside id="side">
+  <header>
+    <h1>Ant tracker viewer</h1>
+    <p id="hdr-meta">loading…</p>
+  </header>
+  <div id="controls">
+    <div class="row">
+      <label>trail (frames)</label>
+      <input id="trail" type="range" min="0" max="120" step="2" value="40" list="trailmarks" />
+      <datalist id="trailmarks"></datalist>
+      <span id="trailVal" style="min-width:30px;text-align:right;">40</span>
+    </div>
+    <div class="row">
+      <button id="btnShowAll">show all</button>
+      <button id="btnHideAll">hide all</button>
+      <button id="btnIsolate">isolate selected</button>
+      <button id="btnClear">clear paths</button>
+    </div>
+    <div class="row">
+      <label>force arrows</label>
+      <button id="btnForce" class="on">on</button>
+      <label>load (T)</label>
+      <button id="btnLoad" class="on">on</button>
+    </div>
+    <div class="row">
+      <input id="search" type="text" placeholder="search ant id…" />
+    </div>
+  </div>
+  <div id="list"></div>
+  <div id="status">—</div>
+</aside>
+
+<script>
+"use strict";
+
+const META_URL = "meta.json";
+const DATA_URL = "data.bin";
+
+const stage = document.getElementById("stage");
+const wrap  = document.getElementById("wrap");
+const vidbox = document.getElementById("vidbox");
+const vid   = document.getElementById("vid");
+const ovl   = document.getElementById("ovl");
+const ctx   = ovl.getContext("2d");
+const seek  = document.getElementById("seek");
+const timeEl = document.getElementById("time");
+const btnPlay = document.getElementById("btnPlay");
+const rate = document.getElementById("rate");
+const rateVal = document.getElementById("rateVal");
+const trail = document.getElementById("trail");
+const trailVal = document.getElementById("trailVal");
+const btnShowAll = document.getElementById("btnShowAll");
+const btnHideAll = document.getElementById("btnHideAll");
+const btnIsolate = document.getElementById("btnIsolate");
+const btnForce = document.getElementById("btnForce");
+const btnLoad = document.getElementById("btnLoad");
+const btnClear = document.getElementById("btnClear");
+const search = document.getElementById("search");
+const list = document.getElementById("list");
+const statusEl = document.getElementById("status");
+const hdrMeta = document.getElementById("hdr-meta");
+
+const state = {
+  meta: null,
+  frameNumbers: null,        // Uint32Array of frames present
+  frameOffsets: null,        // Uint32Array, length = n_frames + 1
+  antIds: null, xs: null, ys: null, thetas: null,
+  lx: null, ly: null, lw: null, lh: null, lth: null,
+  byAnt: null,               // Map<antId, indices into detection arrays>
+  pathOpen: new Set(),       // ants whose full path is rendered
+  hidden:   new Set(),       // ants explicitly hidden from the canvas
+  showForce: true,
+  showLoad: true,
+  trailFrames: 40,
+};
+
+async function load() {
+  const meta = await fetch(META_URL).then(r => r.json());
+  state.meta = meta;
+  hdrMeta.textContent = `${meta.n_ants.toLocaleString()} ants · ${meta.n_records.toLocaleString()} pts · ${meta.n_frames} frames`;
+
+  // Configure video and canvas size; start video metadata fetch in parallel
+  // with the data.bin download so we don't have to wait for both serially.
+  vid.src = meta.video_url;
+  vid.load();
+  vidbox.style.width  = meta.video_w + "px";
+  vidbox.style.height = meta.video_h + "px";
+  vid.width = meta.video_w; vid.height = meta.video_h;
+  ovl.width = meta.video_w; ovl.height = meta.video_h;
+  fitToStage();
+  window.addEventListener("resize", fitToStage);
+
+  const buf = await fetch(DATA_URL).then(r => r.arrayBuffer());
+  const L = meta.layout;
+  state.frameNumbers = new Uint32Array(buf, L.frame_numbers.offset, L.frame_numbers.length / 4);
+  state.frameOffsets = new Uint32Array(buf, L.frame_offsets.offset, L.frame_offsets.length / 4);
+  state.antIds       = new Uint32Array(buf, L.ant_ids.offset,       L.ant_ids.length / 4);
+  state.xs           = new Float32Array(buf, L.xs.offset,           L.xs.length / 4);
+  state.ys           = new Float32Array(buf, L.ys.offset,           L.ys.length / 4);
+  state.thetas       = new Float32Array(buf, L.thetas.offset,       L.thetas.length / 4);
+  state.lx  = new Float32Array(buf, L.lx.offset,  L.lx.length / 4);
+  state.ly  = new Float32Array(buf, L.ly.offset,  L.ly.length / 4);
+  state.lw  = new Float32Array(buf, L.lw.offset,  L.lw.length / 4);
+  state.lh  = new Float32Array(buf, L.lh.offset,  L.lh.length / 4);
+  state.lth = new Float32Array(buf, L.lth.offset, L.lth.length / 4);
+
+  // Build per-ant index for full-path display when an ant is selected.
+  // We only build it lazily on first selection to keep load fast.
+  state.frameToIdx = new Map();
+  for (let i = 0; i < state.frameNumbers.length; i++) state.frameToIdx.set(state.frameNumbers[i], i);
+
+  // Inverse of frameOffsets: record index -> frame slot index. Used by trail
+  // polyline rendering to know each detection's frame quickly.
+  state.recToFrameIdx = new Uint32Array(state.antIds.length);
+  for (let fi = 0; fi < state.frameOffsets.length - 1; fi++) {
+    const a0 = state.frameOffsets[fi];
+    const a1 = state.frameOffsets[fi + 1];
+    for (let i = a0; i < a1; i++) state.recToFrameIdx[i] = fi;
+  }
+
+  // Trail slider extends from 0 to the entire video span; "max" = full path.
+  trail.max = String(state.frameNumbers.length);
+  trail.step = "1";
+  // Default to 40 if it fits, else half the range.
+  trail.value = String(Math.min(40, state.frameNumbers.length));
+  trailVal.textContent = trail.value;
+  state.trailFrames = Number(trail.value);
+  // Add tick marks at useful values (1s, 5s, 10s, full).
+  const dl = document.getElementById("trailmarks");
+  if (dl) {
+    dl.replaceChildren();
+    const fps = state.meta.fps / state.meta.frame_step; // effective tracking fps
+    for (const sec of [1, 5, 10, 30]) {
+      const v = Math.round(sec * fps);
+      if (v < state.frameNumbers.length) {
+        const o = document.createElement("option"); o.value = String(v); o.label = `${sec}s`; dl.append(o);
+      }
+    }
+    const o = document.createElement("option"); o.value = String(state.frameNumbers.length); o.label = "all"; dl.append(o);
+  }
+
+  buildList();
+  startLoop();
+}
+
+function fitToStage() {
+  const meta = state.meta;
+  if (!meta) return;
+  const aw = stage.clientWidth, ah = stage.clientHeight;
+  const s = Math.min(aw / meta.video_w, ah / meta.video_h);
+  vidbox.style.transform = `scale(${s})`;
+  vidbox.style.transformOrigin = "center";
+}
+
+// ---- Per-ant index, built lazily.
+function buildAntIndex() {
+  if (state.byAnt) return state.byAnt;
+  const m = new Map();
+  const n = state.antIds.length;
+  for (let i = 0; i < n; i++) {
+    const id = state.antIds[i];
+    let arr = m.get(id);
+    if (!arr) { arr = []; m.set(id, arr); }
+    arr.push(i);
+  }
+  state.byAnt = m;
+  return m;
+}
+
+// ---- Sidebar list.
+function summaryFor(id) {
+  // Lazily synthesize a summary for ants not in meta.ant_summary (top 2000).
+  const m = buildAntIndex();
+  const idxs = m.get(id);
+  if (!idxs || !idxs.length) return { id, n: 0, path: 0, first: 0, last: 0 };
+  let plen = 0;
+  for (let k = 1; k < idxs.length; k++) {
+    const i0 = idxs[k - 1], i1 = idxs[k];
+    const dx = state.xs[i1] - state.xs[i0], dy = state.ys[i1] - state.ys[i0];
+    plen += Math.sqrt(dx * dx + dy * dy);
+  }
+  return { id, n: idxs.length, path: plen, first: 0, last: 0 };
+}
+
+function buildList(focusId) {
+  const baseList = state.meta.ant_summary;
+  const baseIds = new Set(baseList.map(a => a.id));
+  // Always include path-open and hidden ants, synthesizing rows if missing.
+  const extras = [];
+  for (const id of state.pathOpen) if (!baseIds.has(id)) extras.push(summaryFor(id));
+  for (const id of state.hidden)   if (!baseIds.has(id) && !state.pathOpen.has(id)) extras.push(summaryFor(id));
+
+  const filt = search.value.trim();
+  let combined = [...baseList, ...extras];
+  if (filt) combined = combined.filter(a => String(a.id).startsWith(filt));
+  // Pin: path-open first, then hidden, then default order (already sorted by length).
+  combined.sort((a, b) => {
+    const ka = (state.pathOpen.has(a.id) ? 0 : (state.hidden.has(a.id) ? 1 : 2));
+    const kb = (state.pathOpen.has(b.id) ? 0 : (state.hidden.has(b.id) ? 1 : 2));
+    if (ka !== kb) return ka - kb;
+    return b.n - a.n;
+  });
+
+  list.replaceChildren();
+  // Cap to 500, but always include focused id.
+  const limit = 500;
+  let f = combined.slice(0, limit);
+  if (focusId !== undefined && !f.some(a => a.id === focusId)) {
+    const a = combined.find(x => x.id === focusId) ?? summaryFor(focusId);
+    f = [a, ...f.slice(0, limit - 1)];
+  }
+  for (const a of f) {
+    const row = document.createElement("div");
+    const isHidden = state.hidden.has(a.id);
+    const isPath = state.pathOpen.has(a.id);
+    row.className = "ant" + (isPath ? " path" : "") + (isHidden ? " hide" : "");
+    row.dataset.id = a.id;
+
+    const eye = document.createElement("button");
+    eye.className = "eye";
+    eye.title = isHidden ? "show this ant" : "hide this ant";
+    eye.textContent = isHidden ? "🚫" : "👁";
+    eye.onclick = (e) => { e.stopPropagation(); toggleHidden(a.id); };
+
+    const sw = document.createElement("span"); sw.className = "sw"; sw.style.background = colorFor(a.id);
+    const id = document.createElement("span"); id.className = "id"; id.textContent = "#" + a.id;
+    const meta = document.createElement("span"); meta.className = "meta";
+    const lifetime_s = (a.n * state.meta.frame_step / state.meta.fps).toFixed(1);
+    meta.textContent = `${a.n}f · ${a.path.toFixed(0)}px`;
+    const lt = document.createElement("span"); lt.className = "meta"; lt.textContent = `${lifetime_s}s`;
+    row.append(eye, sw, id, meta, lt);
+    row.onclick = () => togglePath(a.id);
+    list.append(row);
+  }
+  if (focusId !== undefined) {
+    const row = list.querySelector(`.ant[data-id="${focusId}"]`);
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function togglePath(id) {
+  if (state.pathOpen.has(id)) state.pathOpen.delete(id);
+  else state.pathOpen.add(id);
+  buildList(id);
+}
+
+function toggleHidden(id) {
+  if (state.hidden.has(id)) state.hidden.delete(id);
+  else { state.hidden.add(id); state.pathOpen.delete(id); }
+  buildList(id);
+}
+
+function colorFor(id) {
+  // Hash → HSL
+  let h = ((id * 2654435761) >>> 0) % 360;
+  return `hsl(${h} 70% 60%)`;
+}
+
+// ---- Frame lookup (binary search).
+function frameIndexFor(frameNo) {
+  // returns index into frameNumbers s.t. frameNumbers[i] <= frameNo, or -1
+  const fn = state.frameNumbers;
+  let lo = 0, hi = fn.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fn[mid] <= frameNo) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+// ---- Drawing.
+function draw() {
+  if (!state.meta) return;
+  const fps = state.meta.fps;
+  const t = vid.currentTime;
+  const frameNo = Math.round(t * fps);
+  const idx = frameIndexFor(frameNo);
+
+  ctx.clearRect(0, 0, ovl.width, ovl.height);
+  if (idx < 0) {
+    rafId = requestAnimationFrame(draw);
+    return;
+  }
+
+  const start = state.frameOffsets[idx];
+  const end   = state.frameOffsets[idx + 1] ?? state.antIds.length;
+
+  // Load (T) overlay.
+  if (state.showLoad && !isNaN(state.lx[idx])) {
+    drawLoad(state.lx[idx], state.ly[idx], state.lw[idx], state.lh[idx], state.lth[idx]);
+  }
+
+  // Trails: walk back through previous frames, draw line segments per ant.
+  const trailLen = state.trailFrames;
+  if (trailLen > 0) drawTrails(idx, trailLen);
+
+  // Path-open ants — render full path (only if not also hidden).
+  for (const id of state.pathOpen) {
+    if (!state.hidden.has(id)) drawFullPath(id);
+  }
+
+  // Current-frame dots, headings, force arrows. Skip hidden ants.
+  for (let i = start; i < end; i++) {
+    if (state.hidden.has(state.antIds[i])) continue;
+    drawAnt(i);
+  }
+
+  // HUD.
+  const dur = vid.duration || 0;
+  timeEl.textContent = `${t.toFixed(2)}s / ${dur.toFixed(2)}s`;
+  if (!seek.dragging) seek.value = String(Math.round((t / Math.max(dur, 0.001)) * 1000));
+
+  rafId = requestAnimationFrame(draw);
+}
+
+function drawAnt(i) {
+  const id = state.antIds[i];
+  const x = state.xs[i], y = state.ys[i], th = state.thetas[i];
+  const isPath = state.pathOpen.has(id);
+  const c = colorFor(id);
+  ctx.fillStyle = c;
+  ctx.beginPath();
+  ctx.arc(x, y, isPath ? 4 : 2.4, 0, Math.PI * 2);
+  ctx.fill();
+  // Heading line (short).
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  const hl = 5;
+  ctx.moveTo(x - Math.cos(th) * hl, y - Math.sin(th) * hl);
+  ctx.lineTo(x + Math.cos(th) * hl, y + Math.sin(th) * hl);
+  ctx.stroke();
+  // Force arrow when ant is in contact with the load.
+  if (state.showForce) drawForceArrow(i);
+}
+
+function drawForceArrow(i) {
+  const idx = frameIndexFor(Math.round(vid.currentTime * state.meta.fps));
+  if (isNaN(state.lx[idx])) return;
+  const ax = state.xs[i], ay = state.ys[i];
+  // contact = ant within (load_long_axis/2 + d_contact_px) of load center,
+  // measured along load-frame axes.
+  const lx = state.lx[idx], ly = state.ly[idx];
+  const lw = state.lw[idx], lh = state.lh[idx], lth = state.lth[idx];
+  const dx = ax - lx, dy = ay - ly;
+  const c = Math.cos(-lth), s = Math.sin(-lth);
+  const rx = dx * c - dy * s;
+  const ry = dx * s + dy * c;
+  const dContact = 12;  // px
+  const inContact = Math.abs(rx) <= lw / 2 + dContact && Math.abs(ry) <= lh / 2 + dContact;
+  if (!inContact) return;
+  const th = state.thetas[i];
+  const arrowLen = 14;
+  const tx = ax + Math.cos(th) * arrowLen;
+  const ty = ay + Math.sin(th) * arrowLen;
+  ctx.strokeStyle = "rgba(255,220,90,0.9)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(tx, ty); ctx.stroke();
+  // Arrowhead.
+  const ah = 4;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.lineTo(tx - Math.cos(th - 0.5) * ah, ty - Math.sin(th - 0.5) * ah);
+  ctx.lineTo(tx - Math.cos(th + 0.5) * ah, ty - Math.sin(th + 0.5) * ah);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,220,90,0.9)";
+  ctx.fill();
+}
+
+function drawTrails(idx, trailLen) {
+  // For short trails (default UX), use the per-frame fading-dot walk; cheap
+  // and gives a nice motion-blur look. For longer trails we switch to per-ant
+  // polylines, which scale much better when trailLen approaches the full video.
+  if (trailLen <= 200) drawTrailsFading(idx, trailLen);
+  else drawTrailsPolyline(idx, trailLen);
+}
+
+function drawTrailsFading(idx, trailLen) {
+  const startIdx = Math.max(0, idx - trailLen);
+  for (let fi = startIdx; fi <= idx; fi++) {
+    const a0 = state.frameOffsets[fi];
+    const a1 = state.frameOffsets[fi + 1] ?? state.antIds.length;
+    const alpha = 0.06 + 0.5 * ((fi - startIdx) / trailLen);
+    for (let i = a0; i < a1; i++) {
+      const id = state.antIds[i];
+      if (state.hidden.has(id)) continue;
+      ctx.fillStyle = colorFor(id);
+      ctx.globalAlpha = alpha * 0.4;
+      ctx.fillRect(state.xs[i], state.ys[i], 1, 1);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawTrailsPolyline(idx, trailLen) {
+  const m = buildAntIndex();
+  const fStartIdx = Math.max(0, idx - trailLen);
+  const fEndIdx = idx;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.25;
+  for (const [id, idxs] of m) {
+    if (state.hidden.has(id)) continue;
+    if (idxs.length < 2) continue;
+    let started = false;
+    ctx.strokeStyle = colorFor(id);
+    ctx.beginPath();
+    for (const i of idxs) {
+      const fi = state.recToFrameIdx[i];
+      if (fi < fStartIdx) continue;
+      if (fi > fEndIdx) break;
+      if (!started) { ctx.moveTo(state.xs[i], state.ys[i]); started = true; }
+      else ctx.lineTo(state.xs[i], state.ys[i]);
+    }
+    if (started) ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFullPath(id) {
+  const m = buildAntIndex();
+  const idxs = m.get(id);
+  if (!idxs || idxs.length < 2) return;
+  ctx.strokeStyle = colorFor(id);
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(state.xs[idxs[0]], state.ys[idxs[0]]);
+  for (let k = 1; k < idxs.length; k++) {
+    ctx.lineTo(state.xs[idxs[k]], state.ys[idxs[k]]);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawLoad(cx, cy, w, h, theta) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(theta);
+  ctx.strokeStyle = "rgba(80,200,255,0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-w / 2, -h / 2, w, h);
+  ctx.beginPath();
+  ctx.arc(0, 0, 3, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(80,200,255,0.9)";
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---- Click-to-isolate on canvas.
+ovl.addEventListener("click", (e) => {
+  const r = ovl.getBoundingClientRect();
+  const sx = ovl.width / r.width, sy = ovl.height / r.height;
+  const px = (e.clientX - r.left) * sx;
+  const py = (e.clientY - r.top) * sy;
+  const idx = frameIndexFor(Math.round(vid.currentTime * state.meta.fps));
+  if (idx < 0) return;
+  const start = state.frameOffsets[idx];
+  const end   = state.frameOffsets[idx + 1] ?? state.antIds.length;
+  let best = -1, bestD = 36;  // 6px hit radius squared
+  for (let i = start; i < end; i++) {
+    const dx = state.xs[i] - px, dy = state.ys[i] - py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD) { bestD = d2; best = i; }
+  }
+  if (best >= 0) {
+    const id = state.antIds[best];
+    if (e.shiftKey) toggleHidden(id);
+    else togglePath(id);
+  }
+});
+
+// ---- Controls wiring.
+btnPlay.onclick = () => {
+  if (vid.paused) { vid.play(); btnPlay.textContent = "⏸"; }
+  else { vid.pause(); btnPlay.textContent = "▶"; }
+};
+seek.addEventListener("input", () => {
+  seek.dragging = true;
+  vid.currentTime = (Number(seek.value) / 1000) * (vid.duration || 0);
+});
+seek.addEventListener("change", () => { seek.dragging = false; });
+rate.oninput = () => { vid.playbackRate = Number(rate.value); rateVal.textContent = `${rate.value}x`; };
+trail.oninput = () => { state.trailFrames = Number(trail.value); trailVal.textContent = trail.value; };
+btnShowAll.onclick = () => { state.hidden.clear(); buildList(); };
+btnHideAll.onclick = () => {
+  const m = buildAntIndex();
+  for (const id of m.keys()) state.hidden.add(id);
+  state.pathOpen.clear();
+  buildList();
+};
+btnIsolate.onclick = () => {
+  const m = buildAntIndex();
+  state.hidden.clear();
+  for (const id of m.keys()) {
+    if (!state.pathOpen.has(id)) state.hidden.add(id);
+  }
+  buildList();
+};
+btnForce.onclick   = () => { state.showForce = !state.showForce; btnForce.classList.toggle("on", state.showForce); btnForce.textContent = state.showForce ? "on" : "off"; };
+btnLoad.onclick    = () => { state.showLoad = !state.showLoad; btnLoad.classList.toggle("on", state.showLoad); btnLoad.textContent = state.showLoad ? "on" : "off"; };
+btnClear.onclick   = () => { state.pathOpen.clear(); buildList(); };
+search.oninput     = () => buildList();
+
+// ---- Keyboard: arrow keys step frame-by-frame, space toggles play.
+// Use capture phase + stopPropagation so the <video> element's default
+// arrow-key seek handlers don't run.
+window.addEventListener("keydown", (e) => {
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  const fps = state.meta?.fps ?? 60;
+  const step = e.shiftKey ? 10 / fps : 1 / fps;
+  if (e.key === "ArrowRight") {
+    e.preventDefault(); e.stopPropagation();
+    vid.pause(); btnPlay.textContent = "▶";
+    vid.currentTime = Math.min((vid.duration || 0), vid.currentTime + step);
+  } else if (e.key === "ArrowLeft") {
+    e.preventDefault(); e.stopPropagation();
+    vid.pause(); btnPlay.textContent = "▶";
+    vid.currentTime = Math.max(0, vid.currentTime - step);
+  } else if (e.key === " " || e.code === "Space") {
+    e.preventDefault(); e.stopPropagation();
+    btnPlay.click();
+  }
+}, { capture: true });
+
+// Belt-and-suspenders: keep the <video> element from holding focus, and
+// blur it when clicked.
+vid.tabIndex = -1;
+vid.addEventListener("focus", () => vid.blur());
+
+let rafId = null;
+function startLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  draw();
+}
+
+load().catch(err => { statusEl.textContent = "load error: " + err.message; console.error(err); });
+</script>
+</body>
+</html>
