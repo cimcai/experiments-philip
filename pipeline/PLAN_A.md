@@ -81,7 +81,7 @@ Output: `ant_summary.parquet` for downstream behavioral analysis.
 
 ## Files to add
 
-All new under `ants-philip-sam3/pipeline/`:
+All new under `ants-philip-tracking/pipeline/`:
 - `cluster_events.py` — step 1
 - `tracklet_graph.py` — step 2
 - `identity_solver.py` — step 3

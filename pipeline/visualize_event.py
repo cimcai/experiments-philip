@@ -18,7 +18,7 @@ EVENTS = Path(__file__).resolve().parent / "cluster_events.parquet"
 TRACKS = Path(
     "/Users/theosechopoulos/Development/cimc/ants-philip/pipeline/tracks_step1_maxlost60_clean.parquet"
 )
-VIDEO = Path("/Users/theosechopoulos/Development/cimc/ants-philip-sam3/ants_full.mp4")
+VIDEO = Path(__file__).resolve().parent.parent / "ants_full.mp4"
 OUT_DIR = Path(__file__).resolve().parent / "event_overlays"
 TRAIL_FRAMES = 60   # 1 second @ 60fps source
 ZOOM_PAD = 120      # px padding around event center
