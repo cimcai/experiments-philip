@@ -117,7 +117,7 @@ def main() -> None:
         "src_h": SRC_H,
         "scale": SCALE,
         "fps": 60.0,
-        "frame_step": 2,  # ant tracks are at every other frame
+        "frame_step": 1,  # tracks_resolved was produced at step=1 (every source frame)
         "n_frames": n_frames,
         "n_records": n_rec,
         "n_ants": int(summary.id.nunique()),
