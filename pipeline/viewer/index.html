@@ -1128,10 +1128,16 @@ btnPlay.onclick = () => {
   state.userWantsPlay = !state.userWantsPlay;
   btnPlay.textContent = state.userWantsPlay ? "⏸" : "▶";
   if (state.userWantsPlay) {
-    if (state.requestedRate <= NATIVE_MAX_RATE) vid.play().catch(() => {});
-    // High-speed: native stays paused; rAF drives currentTime
+    // Re-apply the rate so native playbackRate is restored after pause.
+    // Some browsers reset playbackRate to 1 across pause/play cycles.
+    applyRate();
+    // applyRate calls vid.play() in low-speed mode itself; in high-speed
+    // mode we rely on the rAF loop driven by state.userWantsPlay.
   } else {
     vid.pause();
+    // Reset rAF time accumulator so the next play doesn't fast-forward
+    // by the elapsed-pause duration in high-speed mode.
+    lastRafTime = null;
   }
 };
 seek.addEventListener("input", () => {
