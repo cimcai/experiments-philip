@@ -1156,14 +1156,32 @@ state.userWantsPlay = false;
 function applyRate() {
   const r = state.requestedRate;
   if (r <= NATIVE_MAX_RATE) {
-    vid.playbackRate = r;
-    if (state.userWantsPlay && vid.paused) vid.play().catch(() => {});
+    if (state.userWantsPlay && vid.paused) {
+      // Chrome resets playbackRate to 1 when vid.play() is called; set it
+      // BEFORE play (in case the browser honors it) AND after the play
+      // promise resolves (defensive — required in Chrome).
+      vid.playbackRate = r;
+      const p = vid.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => { vid.playbackRate = r; }).catch(() => {});
+      }
+    } else {
+      vid.playbackRate = r;
+    }
   } else {
     // High-speed mode: keep native paused, our rAF loop advances currentTime.
     vid.playbackRate = 1;
     if (!vid.paused) vid.pause();
   }
 }
+
+// Defensive: re-assert rate whenever the video transitions to playing,
+// in case anything else (browser quirks, autoplay resume) reset it.
+vid.addEventListener("playing", () => {
+  if (state.requestedRate <= NATIVE_MAX_RATE && vid.playbackRate !== state.requestedRate) {
+    vid.playbackRate = state.requestedRate;
+  }
+});
 
 rate.oninput = () => {
   const r = Math.pow(2, Number(rate.value));
