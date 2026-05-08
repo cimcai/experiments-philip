@@ -1,4 +1,4 @@
-"""Step 2 of plan A: build the tracklet graph.
+"""Step 2 of the identity solver: build the tracklet graph.
 
 Nodes:
   • tracklet — one per ant_id, with birth/death frames + positions + velocity

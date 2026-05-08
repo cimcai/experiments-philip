@@ -1,4 +1,4 @@
-"""Step 3 of plan A: solve global identity assignment using the tracklet graph.
+"""Step 3 of the identity solver: assign global identities using the tracklet graph.
 
 Strategy (greedy, count-conserving):
 1. Continuation edges directly merge two tracklets into one global identity.

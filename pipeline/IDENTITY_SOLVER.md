@@ -1,4 +1,4 @@
-# Plan A — Tracklet graph + count conservation
+# Identity solver — tracklet graph + count conservation
 
 ## Context
 
@@ -88,7 +88,7 @@ All new under `ants-philip-tracking/pipeline/`:
 - `audit_resolved.py` — step 4 (extends `aphilip_failure_audit.py`)
 - `behavior_primitives.py` — step 5
 
-Each runs independently from CLI; orchestrator `plan_a.py` chains them.
+Each runs independently from CLI; an orchestrator script chains them.
 
 ## Files to reuse
 

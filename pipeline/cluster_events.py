@@ -1,4 +1,4 @@
-"""Step 1 of plan A: detect cluster events from existing per-frame tracks.
+"""Step 1 of the identity solver: detect cluster events from existing per-frame tracks.
 
 A cluster event is a frame where multiple ants either disappear together
 (merge) or appear together (split). The tracker doesn't preserve identity
