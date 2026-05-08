@@ -608,8 +608,8 @@
     </div>
     <div class="row">
       <label>speed</label>
-      <input id="rate" type="range" min="-4" max="2" step="0.25" value="0"
-             title="Playback speed (log scale). 1× = real-time. Lowest = ~1/16× for slow-motion analysis." />
+      <input id="rate" type="range" min="-4" max="6" step="0.25" value="0"
+             title="Playback speed (log scale). 1× = real-time. Range 1/16× (slow-motion) to 64×. Speeds above ~16× are advanced manually since browsers cap native playbackRate." />
       <span id="rateVal">1.00× · 60 fps</span>
     </div>
   </div>
@@ -883,8 +883,19 @@ function frameIndexFor(frameNo) {
 }
 
 // ---- Drawing.
-function draw() {
+let lastRafTime = null;
+function draw(rafTimestamp) {
   if (!state.meta) return;
+  // For requested speeds above the browser's native playbackRate cap,
+  // top up vid.currentTime manually using the rAF wall-clock delta.
+  if (lastRafTime != null && state.requestedRate > NATIVE_MAX_RATE && !vid.paused) {
+    const dt = (rafTimestamp - lastRafTime) / 1000;
+    const extra = (state.requestedRate - NATIVE_MAX_RATE) * dt;
+    if (extra > 0 && vid.duration) {
+      vid.currentTime = Math.min(vid.duration, vid.currentTime + extra);
+    }
+  }
+  lastRafTime = rafTimestamp;
   const fps = state.meta.fps;
   const t = vid.currentTime;
   const frameNo = Math.round(t * fps);
@@ -1116,10 +1127,15 @@ seek.addEventListener("input", () => {
   vid.currentTime = (Number(seek.value) / 1000) * (vid.duration || 0);
 });
 seek.addEventListener("change", () => { seek.dragging = false; });
+// Browsers cap native playbackRate (~16× in Chrome/Safari). Beyond that,
+// we set playbackRate to the cap and advance vid.currentTime manually each
+// rAF tick to make up the difference.
+const NATIVE_MAX_RATE = 16;
+state.requestedRate = 1;
 rate.oninput = () => {
-  // Slider value is log2(rate); rate = 2^value. Range: 2^-4 (1/16x) … 2^2 (4x).
   const r = Math.pow(2, Number(rate.value));
-  vid.playbackRate = r;
+  state.requestedRate = r;
+  vid.playbackRate = Math.min(r, NATIVE_MAX_RATE);
   const sourceFps = state.meta?.fps ?? 60;
   const fps = sourceFps * r;
   const rateLabel = r >= 1 ? r.toFixed(2) : r.toFixed(3);
