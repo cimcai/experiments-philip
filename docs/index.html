@@ -575,7 +575,7 @@
         <li>Each colored dot is one ant detection at the current frame. The color is hashed from the ant's resolved identity, so an ant keeps the same color across the whole video.</li>
         <li>The number shown next to each ant in the sidebar is its resolved global identity from the solver above.</li>
         <li>Trails draw the last <em>N</em> frames of motion behind each ant; selecting an ant draws its full path across the entire clip.</li>
-        <li>The translucent rectangle outlines the load (the T-shaped object). Force arrows draw briefly along an ant's heading whenever that ant is in contact with the load.</li>
+        <li>The translucent rectangle outlines the load (the T-shaped object). The push-direction overlay draws a fixed-length arrow along the body axis of each ant currently in contact with the load — a heuristic for putative push direction, not a measurement of force.</li>
       </ul>
     </div>
   </section>
@@ -587,12 +587,12 @@
              title="How many past frames of motion to draw behind each ant" />
       <datalist id="trailmarks"></datalist>
       <span id="trailVal">1.0s</span>
-      <label>force arrows</label>
-      <button id="btnForce" title="Show short arrows when an ant is in contact with the load (T-shape). Shortcut: F">off</button>
+      <label>push direction</label>
+      <button id="btnForce" title="For each ant within ~12 px of the load's bounding box, draws a fixed-length arrow along the ant's body axis as a heuristic indicator of putative push direction (no magnitude, no integration). Shortcut: F">off</button>
       <label>load (T)</label>
       <button id="btnLoad" title="Show the T-shape's bounding rectangle and center. Shortcut: L">off</button>
     </div>
-    <div id="ctrl-help">click ant or row: show / hide  ·  keys: F force  ·  L load  ·  Esc show all  ·  / search</div>
+    <div id="ctrl-help">click ant or row: show / hide  ·  keys: F push  ·  L load  ·  Esc show all  ·  / search</div>
   </div>
   <div id="wrap">
     <div id="vidbox">

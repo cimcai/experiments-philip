@@ -27,9 +27,9 @@ What you can do in the viewer:
 - **Trail length**: log-scale slider from 0 s (hide) to the full video duration. Hard time-window cutoff — colors stay constant intensity over the whole window.
 - **Speed**: log-scale slider from 1/16× (slow-motion frame stepping) to 64× (drives `currentTime` directly past the browser's native ~16× cap).
 - **Methodology tab**: switches the stage area to a typeset description of how the identity solver works.
-- **Force-arrow & load overlays** (off by default): toggle short force arrows when an ant contacts the load, or the load's bounding box, via `F` / `L`.
+- **Push-direction & load overlays** (off by default): the push-direction overlay (`F`) draws a fixed-length arrow along the body axis of each ant currently within ~12 px of the load's bounding box — a heuristic for putative push direction, not a measurement of force. The load overlay (`L`) shows the load's oriented bounding box.
 - **Live + interpolated states**: bold colored ring on a dark halo when the ant has a real detection at that frame; dashed ring at a linearly-interpolated position when the ant is in a detection gap.
-- **Keyboard**: `Space` play/pause, `←` / `→` step frame (`Shift+→` jumps 10), `F` force, `L` load, `Esc` unhide all, `/` focus search.
+- **Keyboard**: `Space` play/pause, `←` / `→` step frame (`Shift+→` jumps 10), `F` push direction, `L` load, `Esc` unhide all, `/` focus search.
 
 ## Pipeline
 
