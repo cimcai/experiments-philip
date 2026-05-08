@@ -8,6 +8,14 @@ Multi-ant tracking and identity recovery from top-down cooperative-behavior foot
 
 The pipeline takes a top-down video of many ants (here: ~400 ants pushing a T-shaped load through barriers, from a [Wonder World clip](https://www.youtube.com/watch?v=j9xnhmFA7Ao)) and produces per-ant trajectories with global identities preserved through cluster events. A browser viewer renders the resolved tracks frame-by-frame for analysis. See [`pipeline/IDENTITY_SOLVER.md`](pipeline/IDENTITY_SOLVER.md) for the methodology behind the cluster-event solver.
 
+## Status & context
+
+This was built during a CIMC hackathon as a tangible example of **collective intelligence arising bottom-up**: ~400 ants pushing a T-shape through barriers with no central coordinator — colony-level behavior emerges from individual ants following simple local rules. The point of building it is to have a concrete system to study, model, and hopefully generalize collective-intelligence insights from.
+
+The current tracks are **useful but far from perfect**. Identity switching still happens substantially more than it should, especially inside dense cluster events on the load. The identity solver helps but it isn't the end state. The natural next steps for improving track quality are hyperparameter tuning (`MAX_LOST`, cluster-event detection thresholds, continuation-edge generosity, count-conservation tolerances) and better collision handling — re-matching ants at cluster exits using appearance features, motion priors, or longer-window re-id rather than the current count-conserved 1:1 / 2:2 bridges.
+
+Even with imperfect tracks the viewer dramatically lowers the cost of investigating individual ant behavior: scrub to a moment, focus on one ant, ask what local rule its motion is consistent with. The tracks — current or improved — also support the harder direction: **empirically validating a hypothesized policy** for individual ant behavior. Given a proposed local rule, simulate it on the same arena and compare against the observed trajectories. That's the lever for separating colony-level outcomes from individual-level representations and intelligence, and what makes this a candidate model system for studying emergent collective behavior more broadly.
+
 ## Viewer
 
 The hosted viewer streams pre-computed resolved tracks from the [`v0.1.0`](https://github.com/theosech/ants-philip/releases/tag/v0.1.0) release. Open https://theosech.github.io/ants-philip/ — no install required.
