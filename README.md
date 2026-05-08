@@ -2,21 +2,26 @@
 
 Multi-ant tracking and identity recovery from top-down cooperative-behavior footage.
 
+[**▶ Open the viewer (live)**](https://theosech.github.io/ants-philip/) · [demo GIF below]
+
 ![Viewer demo](docs/viewer-demo.gif)
 
-The pipeline takes a top-down video of many ants (here: ~400 ants pushing a T-shaped load through barriers, from a [Wonder World clip](https://www.youtube.com/watch?v=j9xnhmFA7Ao)) and produces per-ant trajectories with global identities preserved through cluster events. A browser viewer renders the resolved tracks frame-by-frame for analysis.
+The pipeline takes a top-down video of many ants (here: ~400 ants pushing a T-shaped load through barriers, from a [Wonder World clip](https://www.youtube.com/watch?v=j9xnhmFA7Ao)) and produces per-ant trajectories with global identities preserved through cluster events. A browser viewer renders the resolved tracks frame-by-frame for analysis. See [`pipeline/IDENTITY_SOLVER.md`](pipeline/IDENTITY_SOLVER.md) for the methodology behind the cluster-event solver.
 
-## Result
+## Viewer
 
-| Metric                          | Baseline (Hungarian + stitcher) | + Identity solver |
-|---------------------------------|---------------------------------|-------------------|
-| Unique tracked IDs / 211 s      | 7,429                           | **4,635** (−38%)  |
-| Median track length             | 3.6 s                           | **8.9 s**         |
-| Tracks > 10 s                   | 20.5%                           | **47.5%**         |
-| Mid-frame births (= ID swaps)   | 90.6%                           | 88.0%             |
-| Real ant population (per frame) | 412                             | 412               |
+The hosted viewer streams pre-computed resolved tracks from the [`v0.1.0`](https://github.com/theosech/ants-philip/releases/tag/v0.1.0) release. Open https://theosech.github.io/ants-philip/ — no install required.
 
-The remaining fragmentation lives almost entirely in cluster events where count conservation isn't unambiguous (more than 2 ants entering a pile and a different number leaving). The solver abstains rather than guess wrong; see [`pipeline/IDENTITY_SOLVER.md`](pipeline/IDENTITY_SOLVER.md) for the methodology.
+What you can do in the viewer:
+
+- **Per-ant visibility**: each ant has a checkbox; click any row (or the ant on the canvas) to toggle. `select all` / `unselect all` operate on the search-filtered list.
+- **Search**: filter the sidebar by ID prefix (press `/` to focus).
+- **Trail length**: log-scale slider from 0 s (hide) to the full video duration. Hard time-window cutoff — colors stay constant intensity over the whole window.
+- **Speed**: log-scale slider from 1/16× (slow-motion frame stepping) to 64× (drives `currentTime` directly past the browser's native ~16× cap).
+- **Methodology tab**: switches the stage area to a typeset description of how the identity solver works.
+- **Force-arrow & load overlays** (off by default): toggle short force arrows when an ant contacts the load, or the load's bounding box, via `F` / `L`.
+- **Live + interpolated states**: bold colored ring on a dark halo when the ant has a real detection at that frame; dashed ring at a linearly-interpolated position when the ant is in a detection gap.
+- **Keyboard**: `Space` play/pause, `←` / `→` step frame (`Shift+→` jumps 10), `F` force, `L` load, `Esc` unhide all, `/` focus search.
 
 ## Pipeline
 
@@ -95,29 +100,6 @@ The audit script reproduces the result-table metrics on any tracks parquet:
 ```bash
 uv run python pipeline/aphilip_failure_audit.py pipeline/tracks_clean.parquet
 ```
-
-## Viewer keyboard
-
-| Key            | Action                                |
-|----------------|---------------------------------------|
-| `Space`        | play / pause                          |
-| `←` / `→`      | step one frame; `Shift+→` jumps 10    |
-| `F`            | toggle force-arrow overlay            |
-| `L`            | toggle load (T-shape) overlay         |
-| `Esc`          | unhide all ants                       |
-| `/`            | focus search                          |
-
-Click any row (or any ant on the canvas) to toggle visibility. `select all` / `unselect all` operate on the currently filtered list.
-
-## Run on your own footage
-
-Drop a top-down video at `ants_full.mp4` and the pipeline should run as-is for similar scale. Tunables worth checking:
-
-- [`pipeline/run.py:35-44`](pipeline/run.py) — `BG_DIFF_THRESH`, `N_BG_SAMPLES`, `MIN_AREA`, `MAX_AREA`, `MAX_LOST`, distance caps.
-- [`pipeline/cluster_events.py`](pipeline/cluster_events.py) — `EDGE_PX`, `CLUSTER_RADIUS`, `MIN_MEMBERS` (cluster-event detection thresholds).
-- [`pipeline/tracklet_graph.py`](pipeline/tracklet_graph.py) — `CONT_MAX_GAP_FRAMES`, `CONT_MAX_DIST_PX` (continuation-edge generosity).
-
-For very different scales (much smaller / larger ants, very different fps, different colored load), parameters will need re-tuning. The audit script is the recommended yardstick — re-run after each tunable change and watch fragmentation ratio + median track length.
 
 ## Repository layout
 

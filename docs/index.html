@@ -1,0 +1,1298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ant tracker viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+
+    /* warm near-black observatory palette */
+    --bg:          #0c0a07;
+    --bg-side:     #100d09;
+    --bg-stage:    #050403;
+    --bg-elev:     #15110b;
+    --bg-input:    #0a0805;
+
+    --line:        #221d14;
+    --line-soft:   #1a160f;
+    --line-strong: #3b3324;
+
+    --text:        #ebe4d3;
+    --text-soft:   #b9b09a;
+    --text-muted:  #76705f;
+    --text-faint:  #4a4538;
+
+    /* amber/copper accent — distinctive, scientific, ant-evoking */
+    --accent:      #d49b5a;
+    --accent-soft: #b67f3f;
+    --accent-deep: #8a5a26;
+    --accent-bg:   rgba(212, 155, 90, 0.10);
+    --accent-line: rgba(212, 155, 90, 0.32);
+    --accent-glow: rgba(212, 155, 90, 0.55);
+
+    --select:      rgba(212, 155, 90, 0.14);
+    --select-line: rgba(212, 155, 90, 0.45);
+
+    --serif: 'Fraunces', 'Iowan Old Style', 'Charter', Georgia, serif;
+    --sans:  'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    --mono:  'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --rad: 2px;
+  }
+  * { box-sizing: border-box; }
+
+  /* Subtle film-grain layer for atmosphere. */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 100;
+    opacity: 0.035; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/></svg>");
+  }
+
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px; line-height: 1.5;
+    display: grid; grid-template-columns: 320px 1fr; height: 100vh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  #stage {
+    position: relative; overflow: hidden; grid-column: 2;
+    background: var(--bg-stage);
+    background-image: radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(0,0,0,0.5) 100%);
+  }
+  #wrap  { position: absolute; inset: 0; display: grid; place-items: center; }
+  #vidbox {
+    position: relative;
+    box-shadow: 0 0 0 1px rgba(212, 155, 90, 0.10), 0 18px 60px rgba(0,0,0,0.55);
+  }
+  video, canvas { display: block; }
+  canvas { position: absolute; inset: 0; pointer-events: auto; cursor: crosshair; }
+
+  /* ---------- Sidebar ---------- */
+  #side {
+    grid-column: 1; background: var(--bg-side);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+    position: relative;
+  }
+  #side::after {
+    content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 1px;
+    background: linear-gradient(180deg, transparent, var(--accent-line) 30%, var(--accent-line) 70%, transparent);
+    opacity: 0.45; pointer-events: none;
+  }
+  #side header { padding: 14px 22px 12px; border-bottom: 1px solid var(--line); }
+  #side header h1 {
+    margin: 0 0 4px; font-family: var(--serif);
+    font-weight: 500; font-size: 16px; line-height: 1.15;
+    font-variation-settings: "opsz" 96;
+    letter-spacing: -0.01em; color: var(--text);
+  }
+  #side header h1::first-letter { color: var(--accent); }
+  #side header p {
+    margin: 0; font-family: var(--mono); font-size: 9.5px;
+    color: var(--text-muted); letter-spacing: 0.02em;
+  }
+  #side header p.counters { margin-top: 3px; color: var(--text-soft); }
+
+  .tabs {
+    display: flex; gap: 22px; margin: 0 0 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tab {
+    background: transparent; color: var(--text-muted);
+    border: 0; padding: 5px 0 7px; cursor: pointer;
+    font-family: var(--sans); font-size: 9.5px; font-weight: 500;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    border-bottom: 1px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: var(--text-soft); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ---------- Sidebar actions + search ---------- */
+  #side-actions {
+    padding: 10px 22px 8px; display: flex; gap: 6px;
+    background: var(--bg-side);
+  }
+  #side-actions button { flex: 1; font-size: 10px; padding: 4px 8px; }
+  #search-row { padding: 0 22px 10px; background: var(--bg-side); border-bottom: 1px solid var(--line); }
+  #search {
+    width: 100%; background: transparent; color: var(--text);
+    border: 0; border-bottom: 1px solid var(--line-strong);
+    padding: 5px 0 6px; outline: 0;
+    font-family: var(--mono); font-size: 11px;
+    transition: border-color 0.15s;
+  }
+  #search::placeholder { color: var(--text-muted); font-family: var(--sans); font-size: 11px; }
+  #search:focus { border-bottom-color: var(--accent); }
+
+  /* ---------- Ant list ---------- */
+  #list { flex: 1; overflow: auto; padding: 4px 0; }
+  #list::-webkit-scrollbar { width: 8px; }
+  #list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  #list::-webkit-scrollbar-thumb:hover { background: var(--line-strong); }
+
+  .ant {
+    display: grid; grid-template-columns: 14px 7px 1fr auto auto;
+    align-items: center; gap: 8px;
+    padding: 5px 22px;
+    border-bottom: 1px solid var(--line-soft);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .ant:hover { background: var(--bg-elev); }
+  /* Visibility is conveyed by the checkbox alone — no .path / .hide row styling. */
+  .ant .sw {
+    width: 7px; height: 7px; border-radius: 1px;
+    justify-self: center; box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  }
+  .ant input[type=checkbox] {
+    -webkit-appearance: none; appearance: none;
+    width: 11px; height: 11px; margin: 0;
+    background: transparent; border: 1px solid var(--line-strong);
+    border-radius: 1px; cursor: pointer; justify-self: center;
+    display: grid; place-items: center;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .ant input[type=checkbox]:hover { border-color: var(--accent-line); }
+  .ant input[type=checkbox]:checked {
+    background: var(--accent-bg); border-color: var(--accent);
+  }
+  .ant input[type=checkbox]:checked::after {
+    content: ""; width: 5px; height: 5px;
+    background: var(--accent); border-radius: 1px;
+  }
+  .ant .id {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+    color: var(--text); letter-spacing: -0.01em;
+  }
+  .ant .meta { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); }
+
+  /* ---------- Status footer ---------- */
+  #status {
+    padding: 7px 22px; font-family: var(--mono); font-size: 9px;
+    color: var(--text-muted); letter-spacing: 0.04em;
+    border-top: 1px solid var(--line); background: var(--bg);
+    text-transform: uppercase;
+  }
+
+  /* ---------- Top control overlay ---------- */
+  #ctrl-overlay {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 5;
+    background: linear-gradient(180deg, rgba(8, 6, 3, 0.92) 0%, rgba(8, 6, 3, 0.55) 60%, transparent 100%);
+    padding: 18px 24px 38px; display: flex; flex-direction: column; gap: 10px;
+    pointer-events: none;
+  }
+  #ctrl-overlay > * { pointer-events: auto; }
+  #ctrl-overlay .row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  #ctrl-overlay label {
+    font-family: var(--sans); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--text-muted); white-space: nowrap;
+  }
+  #ctrl-overlay button {
+    font-size: 12px; padding: 5px 12px; border-radius: 2px;
+  }
+  #ctrl-overlay input[type=range] {
+    flex: 0 1 200px; min-width: 130px; max-width: 220px; height: 19px;
+  }
+  #ctrl-overlay input[type=range]::-webkit-slider-thumb {
+    width: 12px; height: 12px; margin-top: -5.5px; border-width: 1.5px;
+  }
+  #ctrl-overlay input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; border-width: 1.5px;
+  }
+  #trailVal {
+    font-family: var(--mono); font-size: 12px; color: var(--text-soft);
+    min-width: 48px; text-align: right;
+  }
+  #ctrl-help {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    letter-spacing: 0.02em; margin-top: 3px;
+  }
+
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row label { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+  /* ---------- Buttons ---------- */
+  button {
+    background: rgba(20, 16, 10, 0.85);
+    color: var(--text-soft);
+    border: 1px solid var(--line-strong);
+    padding: 5px 11px;
+    border-radius: var(--rad);
+    cursor: pointer;
+    font-family: var(--sans); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.04em;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  button:hover {
+    color: var(--text); background: rgba(33, 27, 18, 0.95);
+    border-color: var(--accent-line);
+  }
+  button:active { transform: translateY(1px); }
+  button.on {
+    color: var(--accent);
+    background: var(--accent-bg);
+    border-color: var(--accent-line);
+    box-shadow: inset 0 0 0 1px var(--accent-bg);
+  }
+  button.on:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* Play button — circular, accent-colored */
+  #btnPlay {
+    width: 32px; height: 32px; padding: 0;
+    border-radius: 50%; font-size: 11px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--accent); border-color: var(--accent-line);
+    background: rgba(212, 155, 90, 0.05);
+  }
+  #btnPlay:hover { background: var(--accent-bg); border-color: var(--accent); }
+
+  /* ---------- Sliders ---------- */
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    background: transparent; height: 18px; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--line-strong); }
+  input[type=range]::-moz-range-track { height: 1px; background: var(--line-strong); border: 0; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 11px; height: 11px; margin-top: -5px;
+    background: var(--bg); border: 1.5px solid var(--accent);
+    border-radius: 50%;
+    transition: background 0.12s, box-shadow 0.12s;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 11px; height: 11px; border: 1.5px solid var(--accent);
+    background: var(--bg); border-radius: 50%; cursor: pointer;
+  }
+  input[type=range]:hover::-webkit-slider-thumb {
+    background: var(--accent); box-shadow: 0 0 0 4px rgba(212, 155, 90, 0.18);
+  }
+  input[type=range]:hover::-moz-range-thumb { background: var(--accent); }
+  input[type=range]:focus { outline: 0; }
+
+  /* ---------- Bottom playbar ---------- */
+  #playbar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    background: linear-gradient(0deg, rgba(8, 6, 3, 0.92) 0%, rgba(8, 6, 3, 0.55) 60%, transparent 100%);
+    padding: 36px 22px 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #playbar .row { gap: 14px; }
+  #playbar input[type=range] { flex: 1; }
+  #playbar label {
+    font-family: var(--sans); font-size: 10px; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  #time {
+    font-family: var(--mono); font-size: 11px; min-width: 110px; text-align: right;
+    color: var(--text-soft); letter-spacing: 0.02em;
+  }
+  #rateVal {
+    font-family: var(--mono); font-size: 11px; min-width: 130px; text-align: right;
+    color: var(--text-soft); white-space: nowrap;
+  }
+
+  /* ---------- Methodology / doc panel ---------- */
+  #doc {
+    position: absolute; inset: 0; overflow: auto;
+    background: var(--bg-stage); color: var(--text);
+    display: none;
+    padding: 56px 64px 96px;
+  }
+  body[data-mode="doc"] #doc { display: block; }
+  body[data-mode="doc"] #wrap,
+  body[data-mode="doc"] #ctrl-overlay,
+  body[data-mode="doc"] #playbar { display: none; }
+  #doc-inner { max-width: 720px; margin: 0 auto; }
+  #doc h1 {
+    font-family: var(--serif); font-weight: 500;
+    font-size: 38px; line-height: 1.05; letter-spacing: -0.015em;
+    margin: 0 0 8px; color: var(--text);
+    font-variation-settings: "opsz" 144;
+  }
+  #doc h1::first-letter { color: var(--accent); }
+  #doc .lede {
+    font-family: var(--serif); font-style: italic;
+    font-size: 16px; line-height: 1.45; color: var(--text-soft);
+    margin: 0 0 40px; max-width: 56ch;
+  }
+  #doc h2 {
+    font-family: var(--sans); font-size: 11px;
+    font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+    margin: 44px 0 14px; color: var(--accent);
+    padding-bottom: 0; border: 0;
+  }
+  #doc h2::before {
+    content: ""; display: inline-block;
+    width: 28px; height: 1px; background: var(--accent);
+    margin-right: 12px; vertical-align: middle;
+  }
+  #doc h3 {
+    font-family: var(--serif); font-weight: 500;
+    font-size: 17px; margin: 24px 0 8px;
+    color: var(--text); letter-spacing: -0.005em;
+  }
+  #doc p, #doc li {
+    font-family: var(--serif); font-size: 14.5px; line-height: 1.65;
+    color: var(--text-soft);
+  }
+  #doc p { margin: 0 0 14px; }
+  #doc strong { color: var(--text); font-weight: 600; }
+  #doc em { color: var(--accent-soft); font-style: italic; }
+  #doc ul, #doc ol { margin: 0 0 16px; padding-left: 24px; }
+  #doc li { margin-bottom: 6px; }
+  #doc a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent-line); }
+  #doc a:hover { border-bottom-style: solid; }
+  #doc code {
+    background: rgba(212, 155, 90, 0.07);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 1px 6px; font-size: 12.5px;
+    font-family: var(--mono); font-weight: 400;
+    color: var(--accent);
+  }
+  #doc .src {
+    color: var(--text-muted); font-size: 11px; font-style: italic;
+    font-family: var(--serif); margin: 8px 0 0;
+  }
+  #doc .callout {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    padding: 14px 18px; border-radius: 0; margin: 16px 0;
+  }
+  #doc .num {
+    background: transparent;
+    color: var(--accent); border: 1px solid var(--accent-line);
+    border-radius: 0;
+    width: 24px; height: 24px;
+    display: inline-grid; place-items: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    margin-right: 10px; vertical-align: middle;
+  }
+  #doc table {
+    border-collapse: collapse; margin: 14px 0 22px;
+    font-family: var(--mono); font-size: 12px; width: 100%;
+  }
+  #doc th, #doc td {
+    text-align: left; padding: 8px 14px 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  #doc th {
+    color: var(--text-muted); font-weight: 500;
+    font-family: var(--sans); font-size: 10px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  #doc td { color: var(--text-soft); }
+  #doc td.num-col {
+    text-align: right; font-variant-numeric: tabular-nums;
+    padding-right: 28px; color: var(--text);
+  }
+
+  ::selection { background: var(--accent-bg); color: var(--text); }
+</style>
+</head>
+<body data-mode="viewer">
+<aside id="side">
+  <header>
+    <nav class="tabs">
+      <button class="tab active" data-mode="viewer">Viewer</button>
+      <button class="tab" data-mode="doc">Methodology</button>
+    </nav>
+    <h1>Ant tracker viewer</h1>
+    <p id="hdr-meta">loading…</p>
+    <p id="hdr-counters" class="counters">selected: 0 · hidden: 0</p>
+  </header>
+  <div id="side-actions">
+    <button id="btnSelectAll" title="Make every ant visible (uncheck = hidden).">select all</button>
+    <button id="btnUnselectAll" title="Hide every ant. Then check the rows you want to display.">unselect all</button>
+  </div>
+  <div id="search-row">
+    <input id="search" type="text" placeholder="search ant id…" title="Filter the ant list by ID prefix. Press / to focus." />
+  </div>
+  <div id="list"></div>
+  <div id="status">—</div>
+</aside>
+
+<div id="stage">
+  <section id="doc">
+    <div id="doc-inner">
+      <h1>Methodology</h1>
+      <p class="lede">
+        Ants are filmed from above as they push a red T-shaped load through a barrier.
+        This viewer renders <strong>4,635 ants</strong> detected and tracked across
+        <strong>211 s</strong> of footage. The pipeline below is built entirely from
+        classical computer vision plus a graph-based identity solver — no learned
+        model is used at any stage. Two heavier alternatives were evaluated and
+        underperformed on this footage; see the final section.
+      </p>
+
+      <h2><span class="num">1</span>Detection — classical computer vision</h2>
+      <p>
+        Per-frame OpenCV pipeline operating on the cropped top half of the source frame.
+        No neural network, no learned weights, no GPU.
+      </p>
+      <ul>
+        <li><strong>Median background.</strong> 80 frames sampled uniformly across the full video; per-pixel grayscale median. Static elements (walls, printed dots, watermark) survive the median; moving ants and the slowly-moving T do not. Cached at <code>pipeline/background.png</code>.</li>
+        <li><strong>Foreground mask.</strong> <code>|gray − bg| &gt; 12</code> → moving-pixel mask.</li>
+        <li><strong>Adaptive threshold.</strong> <code>cv2.adaptiveThreshold(MEAN_C, BINARY_INV, block=31, C=8)</code> picks dark-on-light blobs.</li>
+        <li><strong>Suppressions.</strong> Red-HSV ranges zero out the T-shape pixels; a fixed bounding box zeros out the corner watermark; AND-ed with the foreground mask.</li>
+        <li><strong>Morphology.</strong> 2×2 opening drops single-pixel noise.</li>
+        <li><strong>Connected components.</strong> Area filter <code>12–400 px²</code>. Below = noise; above = multi-ant clusters (handled in step 4).</li>
+        <li><strong>Pose.</strong> Per blob, centroid + θ from second moments: <code>θ = ½·atan2(2·c<sub>xy</sub>, c<sub>xx</sub> − c<sub>yy</sub>)</code>. Cheap orientation, no PCA call.</li>
+      </ul>
+      <p class="src">Source: <code>ants-philip/pipeline/run.py:61–138</code></p>
+
+      <h2><span class="num">2</span>Linker — Hungarian + constant velocity</h2>
+      <p>
+        Per frame: predict each track's next position from <code>(x + v<sub>x</sub>·decay, y + v<sub>y</sub>·decay)</code>,
+        build a cost matrix of Euclidean distances, cap each row by per-track radius, solve with
+        <code>scipy.optimize.linear_sum_assignment</code>, update velocities with exponential blend.
+        Unmatched detections start new tracks. Tracks unmatched for more than <code>MAX_LOST</code>
+        frames are reaped.
+      </p>
+      <table>
+        <thead><tr><th>Param</th><th class="num-col">Value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>MAX_MATCH_DIST</code></td><td class="num-col">30 px</td><td>baseline association radius</td></tr>
+          <tr><td><code>LOST_DIST_GROWTH</code></td><td class="num-col">1.5 px/f</td><td>radius growth while track is lost</td></tr>
+          <tr><td><code>HARD_TELEPORT_CAP</code></td><td class="num-col">50 px</td><td>absolute upper bound on association</td></tr>
+          <tr><td><code>VEL_BLEND</code></td><td class="num-col">0.6</td><td>exponential blend on velocity update</td></tr>
+          <tr><td><code>VEL_DECAY</code></td><td class="num-col">0.85</td><td>per-frame velocity decay while lost</td></tr>
+          <tr><td><code>MAX_LOST</code></td><td class="num-col">30–60 f</td><td>frames a track can be unmatched before death</td></tr>
+        </tbody>
+      </table>
+      <p class="src">Source: <code>ants-philip/pipeline/run.py:141–222</code></p>
+
+      <h2><span class="num">3</span>Stitcher — offline gap-bridging</h2>
+      <p>
+        The online linker rebirths a track once it's been lost for <code>MAX_LOST</code> frames.
+        The offline stitcher reads the parquet and matches each track's tail (last-velocity ×
+        gap) to nearby track heads within <code>STITCH_GAP_MAX = 60</code> frames and
+        <code>STITCH_DIST_MAX = 60 px</code>, greedily merging via Union-Find. Reduces ID churn
+        from honest occlusion gaps.
+      </p>
+      <p class="src">Source: <code>ants-philip/pipeline/stitch_tracks.py</code></p>
+
+      <h2><span class="num">4</span>Identity solver — tracklet graph with count conservation</h2>
+      <div class="callout">
+        <strong>The problem.</strong> Ants pile onto the T-shape and their bodies fuse
+        into a single visual blob. The frame-to-frame linker can only see one detection
+        where <em>N</em> ants exist, so it kills <em>N − 1</em> tracks; when ants peel off
+        again it has no memory of who entered, so each emergent ant gets a fresh ID.
+        Before this stage the raw output contains <strong>7,429 tracklet IDs for ~412
+        real ants</strong> — 18× fragmentation. 88.8% of births and 91.2% of deaths
+        happen mid-frame at these pile-up events, not at video boundaries.
+      </div>
+
+      <h3>4a. Cluster-event detection</h3>
+      <p>
+        Any blob with area &gt; 1.5× median ant area (~150 px²) is treated as a
+        multi-ant cluster. Frames where <em>K</em> tracks die simultaneously next to a
+        growing blob are recorded as a <strong>merge event</strong>; frames where
+        <em>K</em> tracks are born next to a shrinking blob are a <strong>split event</strong>.
+        Output: <code>cluster_events.parquet</code>.
+      </p>
+
+      <h3>4b. Tracklet graph</h3>
+      <ul>
+        <li><strong>Nodes:</strong> each post-stitch tracklet, plus every cluster blob (the cluster is itself a node, carrying a member-count that changes over time).</li>
+        <li><strong>Continuation edges:</strong> a parent track ends within 30 frames of a child track start and the gap is bridgeable by velocity extrapolation.</li>
+        <li><strong>Merge-child edges:</strong> a track ends within 5 frames of a merge event, within the blob's radius.</li>
+        <li><strong>Split-parent edges:</strong> a track starts within 5 frames of a split event, within the blob's radius.</li>
+      </ul>
+
+      <h3>4c. Greedy solver</h3>
+      <ol>
+        <li>Every long-lived tracklet (&gt; 10 s) is seeded with a unique <strong>global identity</strong>.</li>
+        <li>Continuation edges merge same-ant fragments across honest motion gaps.</li>
+        <li>Cluster events are walked in temporal order:
+          <ul>
+            <li><strong>Merge:</strong> the cluster's "member set" is stamped with the identities entering it.</li>
+            <li><strong>Split:</strong> each emergent track is assigned to the member identity whose predicted exit position and time-in-cluster best match.</li>
+          </ul>
+        </li>
+        <li><strong>Conserve count:</strong> if <em>K′</em> tracks emerge but only <em>K &lt; K′</em> entered, only <em>K</em> identities are assigned — the surplus stays as fragments. The solver does not fabricate identities to cover bookkeeping errors.</li>
+      </ol>
+
+      <h3>4d. Result</h3>
+      <table>
+        <thead><tr><th></th><th class="num-col">Raw</th><th class="num-col">After solver</th></tr></thead>
+        <tbody>
+          <tr><td>Unique identities</td><td class="num-col">7,429</td><td class="num-col">4,635</td></tr>
+          <tr><td>Fragmentation (~412 real ants)</td><td class="num-col">18×</td><td class="num-col">~11×</td></tr>
+          <tr><td>Reduction from solver</td><td class="num-col">—</td><td class="num-col">38%</td></tr>
+        </tbody>
+      </table>
+      <p class="src">Source: <code>ants-philip-tracking/pipeline/{cluster_events.py, tracklet_graph.py, identity_solver.py}</code></p>
+
+      <h2><span class="num">5</span>Approaches that performed worse on this footage</h2>
+      <p>
+        Two heavier alternatives were evaluated head-to-head against the pipeline above
+        on the same footage. Both were noticeably noisier in side-by-side comparison.
+      </p>
+      <ul>
+        <li>
+          <strong>Pretrained video object-segmentation model with mask propagation.</strong>
+          Seeded by drawing a bounding box around each ant on a single frame; the model
+          then propagates a per-object mask forward through subsequent frames on a GPU.
+          Strengths in principle: pixel-accurate masks and identity continuity through
+          brief partial occlusion. Failures here: mask quality degraded on this footage's
+          small, dark, near-identical ant bodies; identity still collapsed inside ant
+          piles because the model has no count-conservation primitive; ants entering
+          after the seed frame are invisible to it. Throughput: roughly minutes of
+          GPU time per second of footage on a high-end accelerator.
+        </li>
+        <li>
+          <strong>Off-the-shelf multi-animal tracker with bundled background model.</strong>
+          Tested on a wide range of organisms in the literature; emits one trajectory
+          file per individual. On this clip the cached background was a poor fit for
+          the lighting and scale, producing thousands of short fragmented tracks and
+          false-positive trails on static scene features.
+        </li>
+      </ul>
+      <p>
+        The takeaway: detector quality on this specific footage was the bottleneck,
+        not feature richness. A specialist classical detector plus a cluster-aware
+        identity solver produced cleaner per-frame output than either heavier alternative
+        at a fraction of the compute cost.
+      </p>
+
+      <h2><span class="num">6</span>Reading this viewer</h2>
+      <ul>
+        <li>Each colored dot is one ant detection at the current frame. The color is hashed from the ant's resolved identity, so an ant keeps the same color across the whole video.</li>
+        <li>The number shown next to each ant in the sidebar is its resolved global identity from the solver above.</li>
+        <li>Trails draw the last <em>N</em> frames of motion behind each ant; selecting an ant draws its full path across the entire clip.</li>
+        <li>The translucent rectangle outlines the load (the T-shaped object). Force arrows draw briefly along an ant's heading whenever that ant is in contact with the load.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div id="ctrl-overlay">
+    <div class="row">
+      <label>trail</label>
+      <input id="trail" type="range" min="0" max="120" step="2" value="60" list="trailmarks"
+             title="How many past frames of motion to draw behind each ant" />
+      <datalist id="trailmarks"></datalist>
+      <span id="trailVal">1.0s</span>
+      <label>force arrows</label>
+      <button id="btnForce" title="Show short arrows when an ant is in contact with the load (T-shape). Shortcut: F">off</button>
+      <label>load (T)</label>
+      <button id="btnLoad" title="Show the T-shape's bounding rectangle and center. Shortcut: L">off</button>
+    </div>
+    <div id="ctrl-help">click ant or row: show / hide  ·  keys: F force  ·  L load  ·  Esc show all  ·  / search</div>
+  </div>
+  <div id="wrap">
+    <div id="vidbox">
+      <video id="vid" preload="auto" playsinline></video>
+      <canvas id="ovl"></canvas>
+    </div>
+  </div>
+  <div id="playbar">
+    <div class="row">
+      <button id="btnPlay" title="Play / pause (Space)">▶</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
+      <span id="time">0.00s</span>
+    </div>
+    <div class="row">
+      <label>speed</label>
+      <input id="rate" type="range" min="-4" max="6" step="0.25" value="0"
+             title="Playback speed (log scale). 1× = real-time. Range 1/16× (slow-motion) to 64×. Speeds above ~16× are advanced manually since browsers cap native playbackRate." />
+      <span id="rateVal">1.00× · 60 fps</span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// Hosted on GitHub Pages — assets fetched from the v0.1.0 release.
+const RELEASE_BASE = "https://github.com/theosech/ants-philip/releases/download/v0.1.0";
+const META_URL = `${RELEASE_BASE}/meta.json`;
+const DATA_URL = `${RELEASE_BASE}/data.bin`;
+const VIDEO_URL = `${RELEASE_BASE}/ants.mp4`;
+
+const stage = document.getElementById("stage");
+const wrap  = document.getElementById("wrap");
+const vidbox = document.getElementById("vidbox");
+const vid   = document.getElementById("vid");
+const ovl   = document.getElementById("ovl");
+const ctx   = ovl.getContext("2d");
+const seek  = document.getElementById("seek");
+const timeEl = document.getElementById("time");
+const btnPlay = document.getElementById("btnPlay");
+const rate = document.getElementById("rate");
+const rateVal = document.getElementById("rateVal");
+const trail = document.getElementById("trail");
+const trailVal = document.getElementById("trailVal");
+const btnSelectAll = document.getElementById("btnSelectAll");
+const btnUnselectAll = document.getElementById("btnUnselectAll");
+const btnForce = document.getElementById("btnForce");
+const btnLoad = document.getElementById("btnLoad");
+const search = document.getElementById("search");
+const list = document.getElementById("list");
+const statusEl = document.getElementById("status");
+const hdrMeta = document.getElementById("hdr-meta");
+
+const state = {
+  meta: null,
+  frameNumbers: null,        // Uint32Array of frames present
+  frameOffsets: null,        // Uint32Array, length = n_frames + 1
+  antIds: null, xs: null, ys: null, thetas: null,
+  lx: null, ly: null, lw: null, lh: null, lth: null,
+  byAnt: null,               // Map<antId, indices into detection arrays>
+  hidden:   new Set(),       // ants hidden from the canvas (unchecked rows)
+  showForce: false,
+  showLoad: false,
+  trailFrames: 60,
+};
+
+async function load() {
+  const meta = await fetch(META_URL).then(r => r.json());
+  state.meta = meta;
+  hdrMeta.textContent = `${meta.n_ants.toLocaleString()} ants · ${meta.n_records.toLocaleString()} pts · ${meta.n_frames} frames`;
+
+  // Configure video and canvas size; start video metadata fetch in parallel
+  // with the data.bin download so we don't have to wait for both serially.
+  vid.src = VIDEO_URL;
+  vid.load();
+  vidbox.style.width  = meta.video_w + "px";
+  vidbox.style.height = meta.video_h + "px";
+  vid.width = meta.video_w; vid.height = meta.video_h;
+  ovl.width = meta.video_w; ovl.height = meta.video_h;
+  fitToStage();
+  window.addEventListener("resize", fitToStage);
+
+  const buf = await fetch(DATA_URL).then(r => r.arrayBuffer());
+  const L = meta.layout;
+  state.frameNumbers = new Uint32Array(buf, L.frame_numbers.offset, L.frame_numbers.length / 4);
+  state.frameOffsets = new Uint32Array(buf, L.frame_offsets.offset, L.frame_offsets.length / 4);
+  state.antIds       = new Uint32Array(buf, L.ant_ids.offset,       L.ant_ids.length / 4);
+  state.xs           = new Float32Array(buf, L.xs.offset,           L.xs.length / 4);
+  state.ys           = new Float32Array(buf, L.ys.offset,           L.ys.length / 4);
+  state.thetas       = new Float32Array(buf, L.thetas.offset,       L.thetas.length / 4);
+  state.lx  = new Float32Array(buf, L.lx.offset,  L.lx.length / 4);
+  state.ly  = new Float32Array(buf, L.ly.offset,  L.ly.length / 4);
+  state.lw  = new Float32Array(buf, L.lw.offset,  L.lw.length / 4);
+  state.lh  = new Float32Array(buf, L.lh.offset,  L.lh.length / 4);
+  state.lth = new Float32Array(buf, L.lth.offset, L.lth.length / 4);
+
+  // Build per-ant index for full-path display when an ant is selected.
+  // We only build it lazily on first selection to keep load fast.
+  state.frameToIdx = new Map();
+  for (let i = 0; i < state.frameNumbers.length; i++) state.frameToIdx.set(state.frameNumbers[i], i);
+
+  // Inverse of frameOffsets: record index -> frame slot index. Used by trail
+  // polyline rendering to know each detection's frame quickly.
+  state.recToFrameIdx = new Uint32Array(state.antIds.length);
+  for (let fi = 0; fi < state.frameOffsets.length - 1; fi++) {
+    const a0 = state.frameOffsets[fi];
+    const a1 = state.frameOffsets[fi + 1];
+    for (let i = a0; i < a1; i++) state.recToFrameIdx[i] = fi;
+  }
+
+  // Trail slider — exponential mapping from 0..100 → 0s..durSec.
+  // seconds = expm1((value/100) * ln(durSec+1))
+  // 0 maps cleanly to 0s; max maps to durSec. Fine control near 0, coarser past.
+  const fpsEff = state.meta.fps / (state.meta.frame_step || 1);
+  const durSec = state.frameNumbers.length / fpsEff;
+  state.trailDurSec = durSec;
+  trail.min = "0";
+  trail.max = "100";
+  trail.step = "0.5";
+  // Default = 1s of trail. Solve value: 1 = expm1((v/100)*ln(durSec+1))
+  // → v = 100 * ln(2) / ln(durSec+1)
+  const defaultSec = 1.0;
+  const defaultValue = 100 * Math.log(defaultSec + 1) / Math.log(durSec + 1);
+  trail.value = String(defaultValue.toFixed(2));
+  trailVal.textContent = `${defaultSec.toFixed(1)}s`;
+  state.trailFrames = Math.round(defaultSec * fpsEff);
+  const dl = document.getElementById("trailmarks");
+  if (dl) {
+    dl.replaceChildren();
+    for (const sec of [1, 5, 30, 60, 120]) {
+      if (sec <= durSec) {
+        const v = 100 * Math.log(sec + 1) / Math.log(durSec + 1);
+        const o = document.createElement("option"); o.value = String(v.toFixed(2)); o.label = `${sec}s`; dl.append(o);
+      }
+    }
+  }
+
+  buildList();
+  startLoop();
+}
+
+function fitToStage() {
+  const meta = state.meta;
+  if (!meta) return;
+  const aw = stage.clientWidth, ah = stage.clientHeight;
+  const s = Math.min(aw / meta.video_w, ah / meta.video_h);
+  vidbox.style.transform = `scale(${s})`;
+  vidbox.style.transformOrigin = "center";
+}
+
+// ---- Per-ant index, built lazily.
+function buildAntIndex() {
+  if (state.byAnt) return state.byAnt;
+  const m = new Map();
+  const n = state.antIds.length;
+  for (let i = 0; i < n; i++) {
+    const id = state.antIds[i];
+    let arr = m.get(id);
+    if (!arr) { arr = []; m.set(id, arr); }
+    arr.push(i);
+  }
+  state.byAnt = m;
+  // Also pre-compute the frame number for each detection index so we can
+  // interpolate by time without walking frameOffsets repeatedly.
+  state.detFrame = new Uint32Array(n);
+  for (let fi = 0; fi < state.frameNumbers.length; fi++) {
+    const f = state.frameNumbers[fi];
+    const a = state.frameOffsets[fi];
+    const b = state.frameOffsets[fi + 1] ?? n;
+    for (let k = a; k < b; k++) state.detFrame[k] = f;
+  }
+  return m;
+}
+
+// Position of `id` at frame `f`. Returns {x, y, theta, interpolated} or null
+// if the frame is outside the ant's life. Uses linear interpolation between
+// the bracketing detections.
+function antPosAtFrame(id, f) {
+  const m = buildAntIndex();
+  const idxs = m.get(id);
+  if (!idxs || !idxs.length) return null;
+  // Binary search idxs for a frame >= f
+  let lo = 0, hi = idxs.length - 1;
+  if (state.detFrame[idxs[0]] > f || state.detFrame[idxs[hi]] < f) return null;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (state.detFrame[idxs[mid]] < f) lo = mid + 1; else hi = mid;
+  }
+  const iHi = idxs[lo];
+  const fHi = state.detFrame[iHi];
+  if (fHi === f) {
+    return { x: state.xs[iHi], y: state.ys[iHi], theta: state.thetas[iHi],
+             interpolated: false };
+  }
+  if (lo === 0) return null;  // f is before the first detection (shouldn't happen given guard above)
+  const iLo = idxs[lo - 1];
+  const fLo = state.detFrame[iLo];
+  const t = (f - fLo) / (fHi - fLo);
+  return {
+    x: state.xs[iLo] + (state.xs[iHi] - state.xs[iLo]) * t,
+    y: state.ys[iLo] + (state.ys[iHi] - state.ys[iLo]) * t,
+    theta: state.thetas[iHi],  // theta isn't well-defined to interpolate; pick the next one
+    interpolated: true,
+    gapFrames: fHi - fLo,
+  };
+}
+
+// ---- Sidebar list.
+function summaryFor(id) {
+  // Lazily synthesize a summary for ants not in meta.ant_summary (top 2000).
+  const m = buildAntIndex();
+  const idxs = m.get(id);
+  if (!idxs || !idxs.length) return { id, n: 0, path: 0, first: 0, last: 0 };
+  let plen = 0;
+  for (let k = 1; k < idxs.length; k++) {
+    const i0 = idxs[k - 1], i1 = idxs[k];
+    const dx = state.xs[i1] - state.xs[i0], dy = state.ys[i1] - state.ys[i0];
+    plen += Math.sqrt(dx * dx + dy * dy);
+  }
+  return { id, n: idxs.length, path: plen, first: 0, last: 0 };
+}
+
+function buildList() {
+  // Live-refresh the visibility counter in the sidebar header.
+  const counters = document.getElementById("hdr-counters");
+  if (counters) {
+    const total = (state.byAnt ? state.byAnt.size : state.meta.n_ants);
+    const visible = total - state.hidden.size;
+    counters.textContent = `visible: ${visible} / ${total}`;
+  }
+  const baseList = state.meta.ant_summary;
+  const baseIds = new Set(baseList.map(a => a.id));
+  // Always include hidden ants in the listing so the user can re-show them.
+  const extras = [];
+  for (const id of state.hidden) if (!baseIds.has(id)) extras.push(summaryFor(id));
+
+  const filt = search.value.trim();
+  let combined = [...baseList, ...extras];
+  if (filt) combined = combined.filter(a => String(a.id).startsWith(filt));
+  // Default order is already sorted by track length (longest first).
+  combined.sort((a, b) => b.n - a.n);
+
+  list.replaceChildren();
+  const limit = 500;
+  for (const a of combined.slice(0, limit)) {
+    const row = document.createElement("div");
+    row.className = "ant";
+    row.dataset.id = a.id;
+
+    const isVisible = !state.hidden.has(a.id);
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = isVisible;
+    cb.title = "Show / hide this ant";
+    cb.onclick = (e) => { e.stopPropagation(); toggleHidden(a.id); };
+    const sw = document.createElement("span"); sw.className = "sw"; sw.style.background = colorFor(a.id);
+    const id = document.createElement("span"); id.className = "id"; id.textContent = "#" + a.id;
+    const meta = document.createElement("span"); meta.className = "meta";
+    const lifetime_s = (a.n * state.meta.frame_step / state.meta.fps).toFixed(1);
+    meta.textContent = `${a.n}f · ${a.path.toFixed(0)}px`;
+    const lt = document.createElement("span"); lt.className = "meta"; lt.textContent = `${lifetime_s}s`;
+    row.append(cb, sw, id, meta, lt);
+    row.title = "Click anywhere on the row to show / hide";
+    row.onclick = () => toggleHidden(a.id);
+    list.append(row);
+  }
+}
+
+function toggleHidden(id) {
+  if (state.hidden.has(id)) state.hidden.delete(id);
+  else state.hidden.add(id);
+  buildList();
+}
+
+function colorFor(id) {
+  // Hash → HSL
+  let h = ((id * 2654435761) >>> 0) % 360;
+  return `hsl(${h} 70% 60%)`;
+}
+
+// ---- Frame lookup (binary search).
+function frameIndexFor(frameNo) {
+  // returns index into frameNumbers s.t. frameNumbers[i] <= frameNo, or -1
+  const fn = state.frameNumbers;
+  let lo = 0, hi = fn.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fn[mid] <= frameNo) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+// ---- Drawing.
+let lastRafTime = null;
+function draw(rafTimestamp) {
+  if (!state.meta) return;
+  // High-speed mode: native is paused; advance currentTime manually each
+  // rAF tick at the requested rate.
+  if (lastRafTime != null && state.requestedRate > NATIVE_MAX_RATE && state.userWantsPlay) {
+    const dt = (rafTimestamp - lastRafTime) / 1000;
+    const advance = state.requestedRate * dt;
+    if (advance > 0 && vid.duration) {
+      const next = vid.currentTime + advance;
+      vid.currentTime = next >= vid.duration ? vid.duration : next;
+      if (next >= vid.duration) {
+        // Reached end — stop playing.
+        state.userWantsPlay = false;
+        btnPlay.textContent = "▶";
+      }
+    }
+  }
+  lastRafTime = rafTimestamp;
+  const fps = state.meta.fps;
+  const t = vid.currentTime;
+  const frameNo = Math.round(t * fps);
+  const idx = frameIndexFor(frameNo);
+
+  ctx.clearRect(0, 0, ovl.width, ovl.height);
+  if (idx < 0) {
+    rafId = requestAnimationFrame(draw);
+    return;
+  }
+
+  const start = state.frameOffsets[idx];
+  const end   = state.frameOffsets[idx + 1] ?? state.antIds.length;
+
+  // Load (T) overlay.
+  if (state.showLoad && !isNaN(state.lx[idx])) {
+    drawLoad(state.lx[idx], state.ly[idx], state.lw[idx], state.lh[idx], state.lth[idx]);
+  }
+
+  // Trails: walk back through previous frames, draw line segments per ant.
+  const trailLen = state.trailFrames;
+  if (trailLen > 0) drawTrails(idx, trailLen);
+
+
+  // Current-frame circles, headings, force arrows. Skip hidden ants.
+  // Track which ants got drawn so we know which need interpolation below.
+  const drawnHere = new Set();
+  for (let i = start; i < end; i++) {
+    const id = state.antIds[i];
+    if (state.hidden.has(id)) continue;
+    drawAnt(i);
+    drawnHere.add(id);
+  }
+
+  // For every visible ant NOT detected at this frame, see if its bracketing
+  // detections cover this frame; if so, draw a dotted circle at the
+  // interpolated position so the ant doesn't visually flicker through gaps.
+  const f = state.frameNumbers[idx];
+  const m = buildAntIndex();
+  for (const id of m.keys()) {
+    if (drawnHere.has(id) || state.hidden.has(id)) continue;
+    const p = antPosAtFrame(id, f);
+    if (!p) continue;
+    drawAntDotted(id, p.x, p.y, p.theta);
+  }
+
+  // HUD.
+  const dur = vid.duration || 0;
+  timeEl.textContent = `${t.toFixed(2)}s / ${dur.toFixed(2)}s`;
+  if (!seek.dragging) seek.value = String(Math.round((t / Math.max(dur, 0.001)) * 1000));
+
+  rafId = requestAnimationFrame(draw);
+}
+
+function drawAntDotted(id, x, y, th) {
+  // Interpolated position — solid color, dashed circle to communicate
+  // "this ant wasn't detected at this frame; position is approximate".
+  const c = colorFor(id);
+  ctx.save();
+  ctx.strokeStyle = c;
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([1.5, 1.8]);
+  ctx.beginPath();
+  ctx.arc(x, y, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (Number.isFinite(th)) {
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(th) * 6, y + Math.sin(th) * 6);
+    ctx.lineTo(x + Math.cos(th) * 11, y + Math.sin(th) * 11);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawAnt(i) {
+  const id = state.antIds[i];
+  const x = state.xs[i], y = state.ys[i], th = state.thetas[i];
+  const c = colorFor(id);
+  // Dark halo first so the live circle reads against any trail color or background.
+  ctx.strokeStyle = "rgba(0,0,0,0.7)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  // Bold colored circle on top.
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 1.75;
+  ctx.beginPath();
+  ctx.arc(x, y, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  // Heading tick — outside the circle so the body underneath stays visible.
+  ctx.lineWidth = 1.25;
+  ctx.beginPath();
+  ctx.moveTo(x + Math.cos(th) * 6, y + Math.sin(th) * 6);
+  ctx.lineTo(x + Math.cos(th) * 11, y + Math.sin(th) * 11);
+  ctx.stroke();
+  // Force arrow when ant is in contact with the load.
+  if (state.showForce) drawForceArrow(i);
+}
+
+function drawForceArrow(i) {
+  const idx = frameIndexFor(Math.round(vid.currentTime * state.meta.fps));
+  if (isNaN(state.lx[idx])) return;
+  const ax = state.xs[i], ay = state.ys[i];
+  // contact = ant within (load_long_axis/2 + d_contact_px) of load center,
+  // measured along load-frame axes.
+  const lx = state.lx[idx], ly = state.ly[idx];
+  const lw = state.lw[idx], lh = state.lh[idx], lth = state.lth[idx];
+  const dx = ax - lx, dy = ay - ly;
+  const c = Math.cos(-lth), s = Math.sin(-lth);
+  const rx = dx * c - dy * s;
+  const ry = dx * s + dy * c;
+  const dContact = 12;  // px
+  const inContact = Math.abs(rx) <= lw / 2 + dContact && Math.abs(ry) <= lh / 2 + dContact;
+  if (!inContact) return;
+  const th = state.thetas[i];
+  const arrowLen = 14;
+  const tx = ax + Math.cos(th) * arrowLen;
+  const ty = ay + Math.sin(th) * arrowLen;
+  ctx.strokeStyle = "rgba(255,220,90,0.9)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(tx, ty); ctx.stroke();
+  // Arrowhead.
+  const ah = 4;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.lineTo(tx - Math.cos(th - 0.5) * ah, ty - Math.sin(th - 0.5) * ah);
+  ctx.lineTo(tx - Math.cos(th + 0.5) * ah, ty - Math.sin(th + 0.5) * ah);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,220,90,0.9)";
+  ctx.fill();
+}
+
+function drawTrails(idx, trailLen) {
+  // Per-ant polyline within a hard time window [idx-trailLen, idx].
+  // Solid where consecutive detections are 1 frame apart; dashed across gaps
+  // (the ant was undetected — line is interpolation, not real data).
+  const m = buildAntIndex();
+  const fStartIdx = Math.max(0, idx - trailLen);
+  const fEndIdx = idx;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.55;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const [id, idxs] of m) {
+    if (state.hidden.has(id)) continue;
+    if (idxs.length < 2) continue;
+    ctx.strokeStyle = colorFor(id);
+    let prevFi = -1, prevX = 0, prevY = 0;
+    let dashOpen = false;  // whether the open path is in dashed mode
+    let pathOpen = false;
+    for (const i of idxs) {
+      const fi = state.recToFrameIdx[i];
+      if (fi < fStartIdx) continue;
+      if (fi > fEndIdx) break;
+      const x = state.xs[i], y = state.ys[i];
+      if (prevFi >= 0) {
+        const isGap = (fi - prevFi) > 1;
+        if (isGap !== dashOpen) {
+          // Style change — flush current path, then start a new one from prev point.
+          if (pathOpen) ctx.stroke();
+          ctx.setLineDash(isGap ? [2.5, 2.5] : []);
+          dashOpen = isGap;
+          ctx.beginPath();
+          ctx.moveTo(prevX, prevY);
+          pathOpen = true;
+        }
+        ctx.lineTo(x, y);
+      } else {
+        ctx.setLineDash([]);
+        dashOpen = false;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        pathOpen = true;
+      }
+      prevFi = fi; prevX = x; prevY = y;
+    }
+    if (pathOpen) ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+
+function drawLoad(cx, cy, w, h, theta) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(theta);
+  ctx.strokeStyle = "rgba(80,200,255,0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-w / 2, -h / 2, w, h);
+  ctx.beginPath();
+  ctx.arc(0, 0, 3, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(80,200,255,0.9)";
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---- Click-to-isolate on canvas.
+ovl.addEventListener("click", (e) => {
+  const r = ovl.getBoundingClientRect();
+  const sx = ovl.width / r.width, sy = ovl.height / r.height;
+  const px = (e.clientX - r.left) * sx;
+  const py = (e.clientY - r.top) * sy;
+  const idx = frameIndexFor(Math.round(vid.currentTime * state.meta.fps));
+  if (idx < 0) return;
+  const start = state.frameOffsets[idx];
+  const end   = state.frameOffsets[idx + 1] ?? state.antIds.length;
+  let best = -1, bestD = 36;  // 6px hit radius squared
+  for (let i = start; i < end; i++) {
+    const dx = state.xs[i] - px, dy = state.ys[i] - py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD) { bestD = d2; best = i; }
+  }
+  if (best >= 0) {
+    toggleHidden(state.antIds[best]);
+  }
+});
+
+// ---- Controls wiring.
+btnPlay.onclick = () => {
+  state.userWantsPlay = !state.userWantsPlay;
+  btnPlay.textContent = state.userWantsPlay ? "⏸" : "▶";
+  if (state.userWantsPlay) {
+    // Re-apply the rate so native playbackRate is restored after pause.
+    // Some browsers reset playbackRate to 1 across pause/play cycles.
+    applyRate();
+    // applyRate calls vid.play() in low-speed mode itself; in high-speed
+    // mode we rely on the rAF loop driven by state.userWantsPlay.
+  } else {
+    vid.pause();
+    // Reset rAF time accumulator so the next play doesn't fast-forward
+    // by the elapsed-pause duration in high-speed mode.
+    lastRafTime = null;
+  }
+};
+seek.addEventListener("input", () => {
+  seek.dragging = true;
+  vid.currentTime = (Number(seek.value) / 1000) * (vid.duration || 0);
+});
+seek.addEventListener("change", () => { seek.dragging = false; });
+// Browsers cap native playbackRate (~16× in Chrome/Safari) and even
+// before that, decode + render is the practical limit. For anything past
+// the native cap we drive vid.currentTime manually each rAF tick — and
+// pause native playback so seeks don't thrash against native progress.
+const NATIVE_MAX_RATE = 16;
+state.requestedRate = 1;
+state.userWantsPlay = false;
+
+function applyRate() {
+  const r = state.requestedRate;
+  if (r <= NATIVE_MAX_RATE) {
+    if (state.userWantsPlay && vid.paused) {
+      // Chrome resets playbackRate to 1 when vid.play() is called; set it
+      // BEFORE play (in case the browser honors it) AND after the play
+      // promise resolves (defensive — required in Chrome).
+      vid.playbackRate = r;
+      const p = vid.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => { vid.playbackRate = r; }).catch(() => {});
+      }
+    } else {
+      vid.playbackRate = r;
+    }
+  } else {
+    // High-speed mode: keep native paused, our rAF loop advances currentTime.
+    vid.playbackRate = 1;
+    if (!vid.paused) vid.pause();
+  }
+}
+
+// Defensive: re-assert rate whenever the video transitions to playing,
+// in case anything else (browser quirks, autoplay resume) reset it.
+vid.addEventListener("playing", () => {
+  if (state.requestedRate <= NATIVE_MAX_RATE && vid.playbackRate !== state.requestedRate) {
+    vid.playbackRate = state.requestedRate;
+  }
+});
+
+rate.oninput = () => {
+  const r = Math.pow(2, Number(rate.value));
+  state.requestedRate = r;
+  applyRate();
+  const sourceFps = state.meta?.fps ?? 60;
+  const fps = sourceFps * r;
+  const rateLabel = r >= 1 ? r.toFixed(2) : r.toFixed(3);
+  rateVal.textContent = `${rateLabel}× · ${fps.toFixed(1)} fps`;
+};
+trail.oninput = () => {
+  // Slider is 0..100, exponential mapping to 0..durSec seconds.
+  const v = Number(trail.value);
+  const durSec = state.trailDurSec ?? 30;
+  const sec = Math.expm1((v / 100) * Math.log(durSec + 1));
+  const fpsEff = state.meta.fps / (state.meta.frame_step || 1);
+  state.trailFrames = Math.round(sec * fpsEff);
+  trailVal.textContent = sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
+};
+btnSelectAll.onclick = () => {
+  // Make every ant visible — clear the hidden set entirely.
+  state.hidden.clear();
+  buildList();
+};
+btnUnselectAll.onclick = () => {
+  // Hide every ant.
+  const m = buildAntIndex();
+  for (const id of m.keys()) state.hidden.add(id);
+  buildList();
+};
+btnForce.onclick = () => { state.showForce = !state.showForce; btnForce.classList.toggle("on", state.showForce); btnForce.textContent = state.showForce ? "on" : "off"; };
+btnLoad.onclick  = () => { state.showLoad = !state.showLoad; btnLoad.classList.toggle("on", state.showLoad); btnLoad.textContent = state.showLoad ? "on" : "off"; };
+search.oninput     = () => buildList();
+
+// ---- Keyboard: arrow keys step frame-by-frame, space toggles play.
+// Use capture phase + stopPropagation so the <video> element's default
+// arrow-key seek handlers don't run.
+window.addEventListener("keydown", (e) => {
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  const fps = state.meta?.fps ?? 60;
+  const step = e.shiftKey ? 10 / fps : 1 / fps;
+  if (e.key === "ArrowRight") {
+    e.preventDefault(); e.stopPropagation();
+    vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
+    vid.currentTime = Math.min((vid.duration || 0), vid.currentTime + step);
+  } else if (e.key === "ArrowLeft") {
+    e.preventDefault(); e.stopPropagation();
+    vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
+    vid.currentTime = Math.max(0, vid.currentTime - step);
+  } else if (e.key === " " || e.code === "Space") {
+    e.preventDefault(); e.stopPropagation();
+    btnPlay.click();
+  } else if (e.key === "f" || e.key === "F") {
+    e.preventDefault(); e.stopPropagation();
+    btnForce.click();
+  } else if (e.key === "l" || e.key === "L") {
+    e.preventDefault(); e.stopPropagation();
+    btnLoad.click();
+  } else if (e.key === "Escape") {
+    e.preventDefault(); e.stopPropagation();
+    // Esc clears the hidden set so everyone is visible again.
+    state.hidden.clear();
+    buildList();
+  } else if (e.key === "/") {
+    e.preventDefault(); e.stopPropagation();
+    search.focus();
+    search.select();
+  }
+}, { capture: true });
+
+// Belt-and-suspenders: keep the <video> element from holding focus, and
+// blur it when clicked.
+vid.tabIndex = -1;
+vid.addEventListener("focus", () => vid.blur());
+
+// Buttons keep focus by default after click — that means a subsequent
+// spacebar would re-activate the button instead of triggering our
+// pause/play handler. Blur after click to keep space free for play/pause.
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (t && (t.tagName === "BUTTON" || t.classList.contains("tab"))) {
+    t.blur();
+  }
+}, true);
+
+let rafId = null;
+function startLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  draw();
+}
+
+// ---- Tab toggle: Viewer / Methodology.
+for (const t of document.querySelectorAll(".tab")) {
+  t.addEventListener("click", () => {
+    const mode = t.dataset.mode;
+    document.body.dataset.mode = mode;
+    for (const x of document.querySelectorAll(".tab")) x.classList.toggle("active", x === t);
+    if (mode === "viewer") {
+      // Re-fit; the stage was effectively zero-sized while doc was on top.
+      requestAnimationFrame(fitToStage);
+    } else {
+      // Pause playback so the video isn't decoding while the user reads.
+      vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
+    }
+  });
+}
+
+load().catch(err => { statusEl.textContent = "load error: " + err.message; console.error(err); });
+</script>
+</body>
+</html>
