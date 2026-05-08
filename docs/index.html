@@ -618,11 +618,12 @@
 <script>
 "use strict";
 
-// Hosted on GitHub Pages — assets fetched from the v0.1.0 release.
-const RELEASE_BASE = "https://github.com/theosech/ants-philip/releases/download/v0.1.0";
-const META_URL = `${RELEASE_BASE}/meta.json`;
-const DATA_URL = `${RELEASE_BASE}/data.bin`;
-const VIDEO_URL = `${RELEASE_BASE}/ants.mp4`;
+// Same-origin paths; assets sit alongside this index.html in /docs/
+// when hosted on GitHub Pages, and in /pipeline/viewer/ when served
+// locally via pipeline/viewer/serve.py.
+const META_URL = "meta.json";
+const DATA_URL = "data.bin";
+const VIDEO_URL = "ants.mp4";
 
 const stage = document.getElementById("stage");
 const wrap  = document.getElementById("wrap");
