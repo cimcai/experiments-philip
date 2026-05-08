@@ -886,13 +886,19 @@ function frameIndexFor(frameNo) {
 let lastRafTime = null;
 function draw(rafTimestamp) {
   if (!state.meta) return;
-  // For requested speeds above the browser's native playbackRate cap,
-  // top up vid.currentTime manually using the rAF wall-clock delta.
-  if (lastRafTime != null && state.requestedRate > NATIVE_MAX_RATE && !vid.paused) {
+  // High-speed mode: native is paused; advance currentTime manually each
+  // rAF tick at the requested rate.
+  if (lastRafTime != null && state.requestedRate > NATIVE_MAX_RATE && state.userWantsPlay) {
     const dt = (rafTimestamp - lastRafTime) / 1000;
-    const extra = (state.requestedRate - NATIVE_MAX_RATE) * dt;
-    if (extra > 0 && vid.duration) {
-      vid.currentTime = Math.min(vid.duration, vid.currentTime + extra);
+    const advance = state.requestedRate * dt;
+    if (advance > 0 && vid.duration) {
+      const next = vid.currentTime + advance;
+      vid.currentTime = next >= vid.duration ? vid.duration : next;
+      if (next >= vid.duration) {
+        // Reached end — stop playing.
+        state.userWantsPlay = false;
+        btnPlay.textContent = "▶";
+      }
     }
   }
   lastRafTime = rafTimestamp;
@@ -1119,23 +1125,44 @@ ovl.addEventListener("click", (e) => {
 
 // ---- Controls wiring.
 btnPlay.onclick = () => {
-  if (vid.paused) { vid.play(); btnPlay.textContent = "⏸"; }
-  else { vid.pause(); btnPlay.textContent = "▶"; }
+  state.userWantsPlay = !state.userWantsPlay;
+  btnPlay.textContent = state.userWantsPlay ? "⏸" : "▶";
+  if (state.userWantsPlay) {
+    if (state.requestedRate <= NATIVE_MAX_RATE) vid.play().catch(() => {});
+    // High-speed: native stays paused; rAF drives currentTime
+  } else {
+    vid.pause();
+  }
 };
 seek.addEventListener("input", () => {
   seek.dragging = true;
   vid.currentTime = (Number(seek.value) / 1000) * (vid.duration || 0);
 });
 seek.addEventListener("change", () => { seek.dragging = false; });
-// Browsers cap native playbackRate (~16× in Chrome/Safari). Beyond that,
-// we set playbackRate to the cap and advance vid.currentTime manually each
-// rAF tick to make up the difference.
+// Browsers cap native playbackRate (~16× in Chrome/Safari) and even
+// before that, decode + render is the practical limit. For anything past
+// the native cap we drive vid.currentTime manually each rAF tick — and
+// pause native playback so seeks don't thrash against native progress.
 const NATIVE_MAX_RATE = 16;
 state.requestedRate = 1;
+state.userWantsPlay = false;
+
+function applyRate() {
+  const r = state.requestedRate;
+  if (r <= NATIVE_MAX_RATE) {
+    vid.playbackRate = r;
+    if (state.userWantsPlay && vid.paused) vid.play().catch(() => {});
+  } else {
+    // High-speed mode: keep native paused, our rAF loop advances currentTime.
+    vid.playbackRate = 1;
+    if (!vid.paused) vid.pause();
+  }
+}
+
 rate.oninput = () => {
   const r = Math.pow(2, Number(rate.value));
   state.requestedRate = r;
-  vid.playbackRate = Math.min(r, NATIVE_MAX_RATE);
+  applyRate();
   const sourceFps = state.meta?.fps ?? 60;
   const fps = sourceFps * r;
   const rateLabel = r >= 1 ? r.toFixed(2) : r.toFixed(3);
@@ -1174,11 +1201,11 @@ window.addEventListener("keydown", (e) => {
   const step = e.shiftKey ? 10 / fps : 1 / fps;
   if (e.key === "ArrowRight") {
     e.preventDefault(); e.stopPropagation();
-    vid.pause(); btnPlay.textContent = "▶";
+    vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
     vid.currentTime = Math.min((vid.duration || 0), vid.currentTime + step);
   } else if (e.key === "ArrowLeft") {
     e.preventDefault(); e.stopPropagation();
-    vid.pause(); btnPlay.textContent = "▶";
+    vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
     vid.currentTime = Math.max(0, vid.currentTime - step);
   } else if (e.key === " " || e.code === "Space") {
     e.preventDefault(); e.stopPropagation();
@@ -1233,7 +1260,7 @@ for (const t of document.querySelectorAll(".tab")) {
       requestAnimationFrame(fitToStage);
     } else {
       // Pause playback so the video isn't decoding while the user reads.
-      vid.pause(); btnPlay.textContent = "▶";
+      vid.pause(); state.userWantsPlay = false; btnPlay.textContent = "▶";
     }
   });
 }
