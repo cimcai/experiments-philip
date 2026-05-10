@@ -1,0 +1,18 @@
+[project]
+name = "ants-philip"
+version = "0.1.0"
+description = "Multi-ant tracking with tracklet-graph identity recovery for cooperative-behavior footage."
+authors = [{name = "Theo Sechopoulos"}]
+license = {text = "MIT"}
+keywords = ["computer-vision", "tracking", "ants", "behavior", "identity-solver"]
+requires-python = ">=3.12"
+dependencies = [
+    "imageio-ffmpeg>=0.6.0",
+    "modal>=1.4.2",
+    "numpy>=2.4.4",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.2",
+    "pyarrow>=24.0.0",
+    "scipy>=1.17.1",
+    "tqdm>=4.67.3",
+]
