@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saccade - Foveated Webcam Vision</title>
+<script src="https://cdn.jsdelivr.net/gh/google/swissgl/swissgl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/webgazer@3.5.3/dist/webgazer.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+    height: 100%;
+  }
+  #c {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  #info {
+    position: fixed;
+    top: 8px;
+    left: 10px;
+    color: rgba(255, 255, 255, 0.65);
+    font-family: -apple-system, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+    text-shadow: 0 0 3px #000;
+    white-space: pre;
+  }
+  #prompt {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: #fff;
+    font-family: -apple-system, Helvetica, Arial, sans-serif;
+    text-align: center;
+    background: #000;
+    cursor: pointer;
+  }
+  #prompt h1 { font-weight: 400; font-size: 22px; margin: 0 0 12px; }
+  #prompt p { opacity: 0.6; font-size: 14px; max-width: 420px; margin: 4px 20px; }
+  #calib {
+    position: fixed;
+    inset: 0;
+    display: none;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10;
+  }
+  #calib.active { display: block; }
+  #calib .dot {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    background: rgba(255, 60, 60, 0.95);
+    border: 2px solid #fff;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+  }
+  #calib .dot:hover { transform: scale(1.15); }
+  #calib .dot.done { background: rgba(60, 200, 90, 0.95); pointer-events: none; }
+  /* Move WebGazer's video + face-mesh preview to the upper-right so it doesn't
+     cover the instructions in the upper-left. WebGazer sets these as inline
+     styles, so !important is required to override them. */
+  #webgazerVideoContainer {
+    left: auto !important;
+    right: 10px !important;
+    top: 10px !important;
+  }
+  #calibHelp {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font-family: -apple-system, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    text-align: center;
+    text-shadow: 0 0 4px #000;
+    pointer-events: none;
+    max-width: 460px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<!--
+  Saccade - Foveated Webcam Vision
+
+  Processes live webcam video on the GPU (SwissGL / WebGL2) into an image that
+  approximates what the brain might "see" given a single fixation point:
+   - A small radius around the fixation point is shown at full 1:1 resolution.
+   - Pixels farther from the fixation are blurred, with the blur neighborhood
+     growing larger the farther they are (foveation via mipmap LOD selection).
+  The fixation point ("eye") jumps at random 100-500ms intervals. Half of the
+  jumps are microsaccades (small offsets from the current point) and half are
+  large moves to a random location.
+
+  A lower-right overlay shows a "cortical" view: a log-polar (hyperbolic) remap
+  of the image centered on the fixation point, with the fovea magnified and the
+  periphery compressed so that equal areas represent equal cortical columns. A
+  hexagonal grid illustrates the retina -> cortex mapping. This overlay is a
+  differential (transient) channel: the eye is a change detector, so it shows
+  only what has changed recently. Holding the fixation point steady makes the
+  cortical image fade to neutral gray; each saccade or microsaccade refreshes it.
+
+  Gaze mode (g): uses WebGazer.js to estimate where on the screen the viewer is
+  actually looking (from the webcam) and anchors the fixation point there, so the
+  sharp fovea follows the viewer's gaze. Press c to run a quick click-to-calibrate
+  pass (look at each red dot and click it) for better accuracy.
+
+  Controls:
+    left-click + drag - force the fovea to the mouse location
+    g - toggle gaze mode (WebGazer eye tracking)
+    c - run gaze calibration (gaze mode only)
+    v - toggle WebGazer debug feedback (video + face overlay + gaze dot)
+    m - toggle the fixation marker (crosshair)
+    o - toggle the cortical-magnification overlay
+    Space - pause / resume the saccades
+-->
+<canvas id="c"></canvas>
+<div id="info"></div>
+<div id="prompt">
+  <h1>Saccade - Foveated Webcam Vision</h1>
+  <p>Click to start your camera. The image will be sharp where the simulated eye is looking and blurred elsewhere.</p>
+  <p id="promptStatus">Waiting for camera permission...</p>
+</div>
+<div id="calib">
+  <div id="calibHelp"></div>
+</div>
+<script>
+// ---- Tunable parameters -------------------------------------------------
+const R0 = 0.05;         // foveal radius (fraction of screen WIDTH) shown at 1:1; 0.05 => 10% of width across
+const FALLOFF = 13.0;    // how quickly blur (mip LOD) grows with distance past R0
+const MAX_LOD = 7.0;     // clamp on blur level
+
+const SACCADE_MIN_MS = 100;   // shortest interval between saccades
+const SACCADE_MAX_MS = 500;   // longest interval between saccades
+const MICRO_PROB = 0.5;       // probability a saccade is a microsaccade
+const MICRO_MIN = 0.02;       // microsaccade min magnitude (fraction of screen)
+const MICRO_MAX = 0.05;       // microsaccade max magnitude
+const SACCADE_SPEED = 45.0;   // eye easing rate toward target (1/sec); higher = snappier
+const GAZE_FOLLOW_SPEED = 6.0; // gaze-mode easing rate toward the gaze point (1/sec); lower = smoother glide
+const GAZE_JUMP_FOVEA_MULT = 2.0; // if gaze moves more than this many foveal radii, snap instantly (saccade) instead of gliding
+
+// Cortical-magnification overlay (lower-right): a log-polar "what the cortex
+// sees" view, where the fovea is magnified and the periphery is compressed so
+// that equal areas on the overlay represent equal numbers of cortical columns.
+const OVERLAY_FRAC = 0.34;    // overlay size as a fraction of the shorter screen edge
+const CORTEX_K = 3.2;         // hyperbolic compression strength (higher = stronger fovea magnification)
+const CORTEX_MAX_ECC = 0.8;   // retinal eccentricity (in width units) mapped to the overlay rim
+const HEX_SCALE = 7.0;        // hexagonal "cortical column" density across the overlay
+// The overlay is a *differential* (transient) channel, mimicking the fact that
+// the eye is fundamentally a change detector: photoreceptors / ganglion cells
+// adapt, so a perfectly stationary retinal image fades from perception. We keep
+// a slowly-adapting running average of the cortical image and display only the
+// difference (current - average) around mid-gray. A steady fixation therefore
+// fades to gray; saccades, microsaccades, and real motion produce signal.
+const CORTEX_ADAPT_MS = 480;  // adaptation time constant (ms): how fast a held image fades to gray
+const CORTEX_DIFF_GAIN = 7.0; // amplification of the current-vs-average difference
+// -------------------------------------------------------------------------
+
+const canvas = document.getElementById('c');
+const info = document.getElementById('info');
+const prompt = document.getElementById('prompt');
+const promptStatus = document.getElementById('promptStatus');
+const calib = document.getElementById('calib');
+const calibHelp = document.getElementById('calibHelp');
+const glsl = SwissGL(canvas);
+
+const video = document.createElement('video');
+video.muted = true;
+video.playsInline = true;
+video.setAttribute('playsinline', '');
+
+let cameraStarted = false;
+let cameraError = null;
+
+function startCamera() {
+  if (cameraStarted) return;
+  cameraStarted = true;
+  navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+    .then((stream) => {
+      video.srcObject = stream;
+      return video.play();
+    })
+    .catch((error) => {
+      cameraStarted = false;
+      cameraError = error;
+      promptStatus.textContent = 'Could not access camera: ' + error.message + ' (click to retry)';
+      console.log('Error accessing camera:', error);
+    });
+}
+
+prompt.addEventListener('click', startCamera);
+// Try immediately too, in case permission is already granted.
+startCamera();
+
+// ---- WebGazer gaze tracking ---------------------------------------------
+// The video element feeding SwissGL. We prefer our own always-running <video>
+// (no startup gap) and only fall back to WebGazer's feed if ours has no frame.
+function activeVideo() {
+  if (video.videoWidth) return video;
+  if (webgazerVideo && webgazerVideo.videoWidth) return webgazerVideo;
+  return video;
+}
+
+function onGaze(data) {
+  if (!data) { gazeValid = false; return; }
+  gazeTarget.x = clamp01(data.x / window.innerWidth);
+  gazeTarget.y = clamp01(data.y / window.innerHeight);
+  gazeValid = true;
+}
+
+function startWebgazer() {
+  if (webgazerStarted) return Promise.resolve();
+  if (typeof webgazer === 'undefined') {
+    promptStatus.textContent = 'Gaze tracking library failed to load.';
+    return Promise.reject(new Error('webgazer not loaded'));
+  }
+  webgazerStarted = true;
+  // Make sure our own camera is up for the display, then let WebGazer open the
+  // camera independently for tracking. Sharing the device across two getUserMedia
+  // consumers in one page is well supported and is far more reliable than handing
+  // the camera over: stopping our stream and immediately re-acquiring it in
+  // begin() can make WebGazer stall for seconds and then reject on macOS.
+  startCamera();
+  // WebGazer defaults its FaceMesh model/wasm path to a relative './mediapipe/
+  // face_mesh' folder, which 404s when the library is loaded from a CDN. Point it
+  // at the MediaPipe CDN so the face tracker can actually initialize.
+  webgazer.params.faceMeshSolutionPath = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh';
+  // Configure only the gaze listener before begin(); all visibility toggles and
+  // camera-resolution tweaks are applied AFTER begin() resolves, since calling
+  // them before the camera/DOM exist can leave WebGazer in a state where begin()
+  // rejects several seconds later (which would tear down gaze mode).
+  webgazer.setGazeListener((data) => onGaze(data));
+  return webgazer.begin()
+    .then(() => {
+      webgazerVideo = document.getElementById('webgazerVideoFeed');
+      webgazer.applyKalmanFilter(true);
+      applyGazeDebug();
+    })
+    .catch((err) => {
+      console.log('WebGazer begin() failed:', err);
+      webgazerStarted = false;
+      gazeMode = false;
+      promptStatus.textContent = 'Could not start gaze tracking: ' + (err && err.message || err);
+      // Fall back to the page's own camera so the demo keeps working.
+      startCamera();
+    });
+}
+
+// Toggle WebGazer's built-in debug feedback: the webcam preview, the tracked
+// facial-feature overlay, the feedback box, and the predicted-gaze dot.
+function applyGazeDebug() {
+  if (!webgazerStarted || typeof webgazer === 'undefined') return;
+  webgazer.showVideo(gazeDebug);
+  webgazer.showFaceOverlay(gazeDebug);
+  webgazer.showFaceFeedbackBox(gazeDebug);
+  webgazer.showPredictionPoints(gazeDebug);
+}
+
+function setGazeMode(on) {
+  gazeMode = on;
+  if (!on) {
+    if (webgazerStarted && typeof webgazer !== 'undefined') webgazer.pause();
+    clearTimeout(faceWaitTimer);
+    gazeNotice = '';
+    gazeValid = false;
+    return;
+  }
+  if (!webgazerStarted) {
+    startWebgazer().then(() => maybeForceCalibration());
+  } else if (typeof webgazer !== 'undefined') {
+    webgazer.resume();
+    maybeForceCalibration();
+  }
+}
+
+// Returns true once WebGazer's face tracker has locked onto a face this frame.
+function faceAcquired() {
+  if (typeof webgazer === 'undefined' || !webgazer.getTracker) return false;
+  const tracker = webgazer.getTracker();
+  return !!(tracker && tracker.predictionReady);
+}
+
+// If gaze mode is on but the user hasn't calibrated this session, wait for a
+// face to be acquired and then automatically launch calibration. Gaze
+// predictions stay null until trained, so we gate on face acquisition (not on
+// the gaze callback) to know when calibration can begin.
+function maybeForceCalibration() {
+  if (!gazeMode || calibrated || calibrating) return;
+  clearTimeout(faceWaitTimer);
+  gazeNotice = 'gaze: acquiring face - hold still and face the camera...';
+  const t0 = performance.now();
+  const poll = () => {
+    if (!gazeMode || calibrated || calibrating) { gazeNotice = ''; return; }
+    if (faceAcquired()) {
+      gazeNotice = '';
+      startCalibration();
+      return;
+    }
+    if (performance.now() - t0 > 30000) {
+      // Give up waiting after 30s and calibrate anyway so the user isn't stuck.
+      gazeNotice = '';
+      startCalibration();
+      return;
+    }
+    faceWaitTimer = setTimeout(poll, 200);
+  };
+  poll();
+}
+
+// ---- Quick click-to-calibrate -------------------------------------------
+// Shows a 3x3 grid of dots; look at each and click it a few times. Each click
+// feeds WebGazer's regression a (gaze features -> screen position) sample.
+const CALIB_CLICKS_PER_DOT = 3;
+
+function startCalibration() {
+  if (calibrating) return;
+  // Calibration only makes sense once WebGazer owns the camera.
+  if (!gazeMode) setGazeMode(true);
+  if (!webgazerStarted) { startWebgazer().then(buildCalibration).catch(() => {}); return; }
+  buildCalibration();
+}
+
+function buildCalibration() {
+  calibrating = true;
+  calib.querySelectorAll('.dot').forEach((d) => d.remove());
+  const pts = [0.1, 0.5, 0.9];
+  let remaining = 0;
+  pts.forEach((py) => pts.forEach((px) => {
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.style.left = (px * 100) + '%';
+    dot.style.top = (py * 100) + '%';
+    let clicks = CALIB_CLICKS_PER_DOT;
+    remaining++;
+    dot.addEventListener('click', (e) => {
+      if (typeof webgazer !== 'undefined') {
+        webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
+      }
+      clicks--;
+      dot.style.opacity = String(0.4 + 0.6 * clicks / CALIB_CLICKS_PER_DOT);
+      if (clicks <= 0) {
+        dot.classList.add('done');
+        remaining--;
+        if (remaining <= 0) { calibrated = true; endCalibration(); }
+      }
+      e.stopPropagation();
+    });
+    calib.appendChild(dot);
+  }));
+  calibHelp.textContent = 'Calibration: look at each red dot and click it ' +
+    CALIB_CLICKS_PER_DOT + ' times. Press Esc to finish.';
+  calib.classList.add('active');
+}
+
+function endCalibration() {
+  calibrating = false;
+  calib.classList.remove('active');
+}
+
+// ---- Saccade state ------------------------------------------------------
+let fix = { x: 0.5, y: 0.5 };      // current (eased) fixation point, [0,1]
+let target = { x: 0.5, y: 0.5 };   // saccade target the eye moves toward
+let lastType = 'macro';
+let paused = false;
+let showMarker = true;
+let showOverlay = true;
+let dragging = false;
+let saccadeTimer = null;
+
+// ---- Gaze mode (WebGazer) state -----------------------------------------
+let gazeMode = false;            // is gaze tracking driving the fixation?
+let webgazerStarted = false;     // has webgazer.begin() been called?
+let webgazerVideo = null;        // webgazer's own hidden video feed element
+let gazeTarget = { x: 0.5, y: 0.5 }; // latest gaze point in [0,1] (top-down)
+let gazeValid = false;           // is a recent face/gaze prediction available?
+let calibrating = false;         // is the calibration overlay active?
+let calibrated = false;          // has a full calibration been completed this session?
+let gazeDebug = true;            // show WebGazer's video, face overlay & gaze dot
+let gazeNotice = '';             // transient status line shown in the info overlay
+let faceWaitTimer = null;        // polling timer while waiting for face acquisition
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+function scheduleSaccade() {
+  clearTimeout(saccadeTimer);
+  const interval = SACCADE_MIN_MS + Math.random() * (SACCADE_MAX_MS - SACCADE_MIN_MS);
+  saccadeTimer = setTimeout(doSaccade, interval);
+}
+
+function doSaccade() {
+  // While gaze tracking is live the fovea follows the gaze point directly (see
+  // the render loop), so the simulated saccades are suspended. They resume as a
+  // fallback when gaze mode is off or no face/prediction is available.
+  if (!paused && !dragging && !(gazeMode && gazeValid)) {
+    if (Math.random() < MICRO_PROB) {
+      const mag = MICRO_MIN + Math.random() * (MICRO_MAX - MICRO_MIN);
+      const ang = Math.random() * Math.PI * 2;
+      target.x = clamp01(fix.x + Math.cos(ang) * mag);
+      target.y = clamp01(fix.y + Math.sin(ang) * mag);
+      lastType = 'micro';
+    } else {
+      target.x = Math.random();
+      target.y = Math.random();
+      lastType = 'macro';
+    }
+  }
+  scheduleSaccade();
+}
+scheduleSaccade();
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'm' || e.key === 'M') showMarker = !showMarker;
+  if (e.key === 'o' || e.key === 'O') showOverlay = !showOverlay;
+  if (e.key === 'g' || e.key === 'G') setGazeMode(!gazeMode);
+  if (e.key === 'c' || e.key === 'C') startCalibration();
+  if (e.key === 'v' || e.key === 'V') { gazeDebug = !gazeDebug; applyGazeDebug(); }
+  if (e.key === 'Escape' && calibrating) endCalibration();
+  if (e.key === ' ') { paused = !paused; e.preventDefault(); }
+});
+
+// Left-click and drag to force the fovea to the mouse location.
+function setFixFromMouse(e) {
+  target.x = clamp01(e.clientX / window.innerWidth);
+  target.y = clamp01(e.clientY / window.innerHeight);
+}
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  dragging = true;
+  setFixFromMouse(e);
+  e.preventDefault();
+});
+window.addEventListener('mousemove', (e) => {
+  if (dragging) setFixFromMouse(e);
+});
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) dragging = false;
+});
+
+// ---- Render loop --------------------------------------------------------
+let prevT = performance.now();
+let fps = 0;
+
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(window.innerWidth * dpr);
+  const h = Math.round(window.innerHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+
+function render(now) {
+  const dt = Math.min(0.05, (now - prevT) / 1000);
+  prevT = now;
+  fps += ((1 / Math.max(dt, 1e-4)) - fps) * 0.1;
+
+  resizeCanvas();
+  const w = canvas.width, h = canvas.height;
+  const aspectX = w / h;
+
+  // Choose the fixation target. While gaze tracking is live, follow the
+  // (Kalman-smoothed) gaze point. Big gaze shifts snap instantly like a real
+  // saccade; small shifts (within ~GAZE_JUMP_FOVEA_MULT foveal radii) glide
+  // smoothly like fixational drift / smooth pursuit. Otherwise ease quickly
+  // toward the saccade target. While dragging, snap directly to the mouse.
+  let rate = SACCADE_SPEED;
+  let snap = dragging;
+  if (gazeMode && gazeValid && !dragging) {
+    target.x = gazeTarget.x;
+    target.y = gazeTarget.y;
+    // Distance from current fixation to the gaze point, in screen-WIDTH units
+    // (the y term is divided by the aspect ratio to undo the wider-than-tall
+    // pixel mapping, matching R0 which is a fraction of width).
+    const ddx = target.x - fix.x;
+    const ddy = (target.y - fix.y) / aspectX;
+    const gazeDist = Math.hypot(ddx, ddy);
+    if (gazeDist > GAZE_JUMP_FOVEA_MULT * R0) {
+      snap = true;            // large change -> instant saccade
+    } else {
+      rate = GAZE_FOLLOW_SPEED; // small change -> smooth glide
+    }
+    lastType = 'gaze';
+  }
+  const k = snap ? 1.0 : (1 - Math.exp(-rate * dt));
+  fix.x += (target.x - fix.x) * k;
+  fix.y += (target.y - fix.y) * k;
+
+  const src = activeVideo();
+
+  if (src.videoWidth && src.videoHeight) {
+    if (prompt.style.display !== 'none') prompt.style.display = 'none';
+
+    const videoAspect = src.videoWidth / src.videoHeight;
+
+    // Upload the current camera frame to a GPU texture.
+    const vtex = glsl({}, { data: src, tag: 'video' });
+
+    // Cover-fit the camera frame into a canvas-sized buffer (mirrored
+    // horizontally so it reads like a mirror). This managed render target
+    // is what we generate mipmaps from in the foveation pass.
+    const frame = glsl({
+      vtex: vtex.edge.linear, videoAspect, canvasAspect: aspectX, FP: `
+      vec2 scale = canvasAspect > videoAspect
+        ? vec2(1.0, videoAspect/canvasAspect)
+        : vec2(canvasAspect/videoAspect, 1.0);
+      vec2 uv = (UV - 0.5) * scale + 0.5;
+      uv.x = 1.0 - uv.x;           // mirror horizontally
+      uv.y = 1.0 - uv.y;           // flip vertically (texture origin)
+      FOut = vtex(uv);`
+    }, { size: [w, h], format: 'rgba8', tag: 'frame' });
+
+    // Foveated draw to the canvas. Distance from the fixation point selects a
+    // mipmap LOD: 0 (sharp) inside the fovea, growing with distance so the
+    // effective blur neighborhood expands outward.
+    glsl({
+      frame: frame.edge.miplinear,
+      fix: [fix.x, 1.0 - fix.y],   // flip y: shader UV origin is bottom-left
+      aspectX, R0, FALLOFF, MAX_LOD,
+      marker: showMarker ? 1.0 : 0.0,
+      FP: `
+      float d = length(vec2(UV.x - fix.x, (UV.y - fix.y) / aspectX));
+      float lod = clamp((d - R0) * FALLOFF, 0.0, MAX_LOD);
+      vec3 col = textureLod(frame, UV, lod).rgb;
+      if (marker > 0.5) {
+        float ring = abs(d - R0);
+        col = mix(vec3(1.0, 0.25, 0.25), col, smoothstep(0.0, 0.004, ring));
+      }
+      FOut = vec4(col, 1.0);`
+    });
+
+    // Cortical-magnification overlay in the lower-right corner. We remap the
+    // disk via an inverse-log (hyperbolic) function: overlay radius rho maps to
+    // retinal eccentricity ecc = a*(exp(K*rho)-1), so the fovea (center) is
+    // greatly magnified and the periphery is squeezed toward the rim. A uniform
+    // hexagonal grid drawn in overlay space marks equal-area "cortical columns",
+    // illustrating the retina (main screen) -> cortex (overlay) mapping.
+    //
+    // The displayed image is a temporal *difference* (transient channel): we
+    // keep a slowly-adapting running average of the cortical image and show only
+    // (current - average) around mid-gray, so a held fixation fades to gray and
+    // every saccade/microsaccade refreshes it.
+    if (showOverlay) {
+      const ov = Math.round(Math.min(w, h) * OVERLAY_FRAC);
+      const margin = Math.round(Math.min(w, h) * 0.025);
+
+      // Shared GLSL: cortexCol(uv) samples the camera frame through the
+      // log-polar cortical remap (with out-of-frame darkening). Reused by both
+      // the adaptation pass and the differential display pass so they stay in
+      // perfect register.
+      const cortexInc = `
+        vec3 cortexCol(vec2 uv){
+          vec2 c = uv*2.0 - 1.0;
+          float rho = length(c);
+          if (rho > 1.0) return vec3(0.0);
+          vec2 dir = rho > 1e-4 ? c/rho : vec2(0.0);
+          float eccScale = CORTEX_MAX_ECC/(exp(CORTEX_K) - 1.0);
+          float ecc = eccScale*(exp(CORTEX_K*rho) - 1.0);
+          vec2 suv = vec2(fix.x + ecc*dir.x, fix.y + ecc*dir.y*aspectX);
+          vec3 col = frame(suv).rgb;
+          float inb = step(0.0, suv.x)*step(suv.x, 1.0)*step(0.0, suv.y)*step(suv.y, 1.0);
+          return col * mix(0.18, 1.0, inb);
+        }`;
+
+      // Adaptation pass: a persistent buffer that exponentially relaxes toward
+      // the current cortical image (Src = previous frame's average). The leak
+      // rate adaptK is derived from CORTEX_ADAPT_MS so the fade is frame-rate
+      // independent. Float format avoids the rounding stall an 8-bit buffer
+      // would hit for the tiny per-frame increments.
+      const adaptK = 1 - Math.exp(-dt / (CORTEX_ADAPT_MS / 1000));
+      const adapt = glsl({
+        frame: frame.edge.linear,
+        fix: [fix.x, 1.0 - fix.y],
+        aspectX, CORTEX_K, CORTEX_MAX_ECC, adaptK,
+        Inc: cortexInc,
+        FP: `
+        vec3 now = cortexCol(UV);
+        vec3 prev = Src(UV).rgb;
+        FOut = vec4(mix(prev, now, adaptK), 1.0);`
+      }, { size: [ov, ov], format: 'rgba16f', story: 2, tag: 'cortexAdapt' });
+
+      glsl({
+        frame: frame.edge.linear,
+        adapt: adapt[0].edge.linear,
+        fix: [fix.x, 1.0 - fix.y],
+        aspectX, CORTEX_K, CORTEX_MAX_ECC, HEX_SCALE, R0, DIFF_GAIN: CORTEX_DIFF_GAIN,
+        marker: showMarker ? 1.0 : 0.0,
+        View: [w - ov - margin, margin, ov, ov],
+        Blend: 'd*(1-sa)+s*sa',
+        Inc: [cortexInc, `
+        const vec2 HS = vec2(1.0, 1.7320508);
+        float hexDist(vec2 p){ p = abs(p); return max(dot(p, HS*0.5), p.x); }
+        vec2 hexLocal(vec2 p){
+          vec4 hC = floor(vec4(p, p - vec2(0.5, 1.0)) / vec4(HS, HS)) + 0.5;
+          vec4 h = vec4(p - hC.xy*HS, p - (hC.zw + 0.5)*HS);
+          return dot(h.xy, h.xy) < dot(h.zw, h.zw) ? h.xy : h.zw;
+        }`],
+        FP: `
+        vec2 c = UV*2.0 - 1.0;
+        float rho = length(c);
+        if (rho > 1.0) { FOut = vec4(0.0); return; }
+        // Differential (transient) signal: current cortical image minus its
+        // slowly-adapting running average, centered on mid-gray. Steady image
+        // -> average catches up -> difference -> 0 -> gray.
+        vec3 now = cortexCol(UV);
+        vec3 base = adapt(UV).rgb;
+        vec3 col = vec3(0.5) + (now - base) * DIFF_GAIN;
+        // uniform hexagonal "cortical column" grid in overlay space
+        float border = hexDist(hexLocal(c*HEX_SCALE));
+        float line = smoothstep(0.5 - 0.05, 0.5, border);
+        col = mix(col, vec3(0.1, 1.0, 0.7), line*0.30);
+        // foveal marker ring, mapped to its correct cortical radius
+        if (marker > 0.5) {
+          float eccScale = CORTEX_MAX_ECC/(exp(CORTEX_K) - 1.0);
+          float rhoM = log(R0/eccScale + 1.0)/CORTEX_K;
+          float rw = 0.018;
+          float ringM = smoothstep(rw, rw*0.5, abs(rho - rhoM));
+          col = mix(col, vec3(1.0, 0.25, 0.25), ringM);
+        }
+        // rim outline + soft circular mask
+        float aa = 2.0/float(ViewSize.x);
+        float mask = smoothstep(1.0, 1.0 - aa, rho);
+        float ring = smoothstep(1.0 - 0.04, 1.0 - 0.02, rho) * smoothstep(1.0, 1.0 - 0.02, rho);
+        col = mix(col, vec3(0.9), ring);
+        FOut = vec4(col, mask);`
+      });
+    }
+  }
+
+  const gazeStatus = gazeMode
+    ? (gazeValid ? 'on (tracking)' : 'on - press c to calibrate')
+    : 'off';
+  info.textContent =
+    'fps: ' + fps.toFixed(0) +
+    '\nlast saccade: ' + lastType +
+    (paused ? '  (paused)' : '') +
+    '\ngaze mode: ' + gazeStatus +
+    (gazeNotice ? '\n' + gazeNotice : '') +
+    '\ng: gaze   c: calibrate   v: gaze debug   m: marker' +
+    '\no: cortex overlay   space: pause';
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
